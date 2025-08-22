@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- PWA配置 -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#3b82f6" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    
+    <!-- SEO优化 -->
+    <title>每日拼图 - 益智拼图小游戏</title>
+    <meta name="description" content="每日一题的益智拼图游戏，使用拼图块填满网格，空出当天的日期。挑战你的空间思维能力！" />
+    <meta name="keywords" content="拼图,益智游戏,每日挑战,逻辑思维,休闲游戏" />
+    <meta name="author" content="每日拼图团队" />
+    
+    <!-- Open Graph -->
+    <meta property="og:title" content="每日拼图 - 益智拼图小游戏" />
+    <meta property="og:description" content="每日一题的益智拼图游戏，使用拼图块填满网格，空出当天的日期" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/icon-512.png" />
+    
+    <!-- 移动端优化 -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="每日拼图" />
+    
+    <!-- 预加载关键资源 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Service Worker注册 -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then((registration) => {
+              console.log('SW registered: ', registration);
+            })
+            .catch((registrationError) => {
+              console.log('SW registration failed: ', registrationError);
+            });
+        });
+      }
+    </script>
+  </body>
+</html>
