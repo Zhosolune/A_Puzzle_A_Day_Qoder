@@ -14,7 +14,7 @@ import type {
   GameMove,
   GameDifficulty 
 } from '../types';
-import { PUZZLE_PIECES, getPieceShapeWithRotation } from '../data/puzzlePieces';
+import { PUZZLE_PIECES, getPieceShapeWithTransform } from '../data/puzzlePieces';
 import { GRID_LAYOUT, isReservedPosition, isValidPosition, getPositionLabel } from '../data/gridLayout';
 import { getCurrentDate, generateDateTarget } from '../utils/dateUtils';
 
@@ -25,8 +25,17 @@ const initialDragState: DragState = {
   dragOffset: { x: 0, y: 0 },
   currentGridPosition: null,
   isValidPosition: false,
-  previewCells: []
+  previewCells: [],
+  globalMousePosition: null,
+  isInValidDropZone: false,
+  originalStorageArea: undefined,
+  originalStorageIndex: undefined
 };
+
+// 存放区域引用
+let leftStorageRef: React.RefObject<HTMLDivElement | null> | null = null;
+let rightStorageRef: React.RefObject<HTMLDivElement | null> | null = null;
+let gameBoardRef: React.RefObject<HTMLCanvasElement | null> | null = null;
 
 // 初始游戏统计
 const initialStats: GameStats = {
@@ -70,6 +79,8 @@ function createInitialPieces(): PuzzlePieceState[] {
     shapeId: piece.id,
     isPlaced: false,
     rotation: 0,
+    isFlippedHorizontally: false,
+    isFlippedVertically: false,
     isDragging: false,
     isSelected: false
   }));
@@ -186,7 +197,7 @@ export const useGameStore = create<GameStore>()(
           return false;
         }
 
-        const shape = getPieceShapeWithRotation(piece.shapeId, piece.rotation);
+        const shape = getPieceShapeWithTransform(piece.shapeId, piece.rotation, piece.isFlippedHorizontally, piece.isFlippedVertically);
         if (!shape) return false;
 
         // 计算占用的格子
@@ -225,6 +236,8 @@ export const useGameStore = create<GameStore>()(
           shapeId: piece.shapeId,
           position,
           rotation: piece.rotation,
+          isFlippedHorizontally: piece.isFlippedHorizontally,
+          isFlippedVertically: piece.isFlippedVertically,
           occupiedCells
         });
 
@@ -325,7 +338,7 @@ export const useGameStore = create<GameStore>()(
         if (piece.isPlaced && piece.position) {
           // 临时更新旋转角度来检查
           const tempPiece = { ...piece, rotation: newRotation };
-          const tempShape = getPieceShapeWithRotation(tempPiece.shapeId, newRotation);
+          const tempShape = getPieceShapeWithTransform(tempPiece.shapeId, newRotation, piece.isFlippedHorizontally, piece.isFlippedVertically);
           
           if (!tempShape) return;
 
@@ -368,14 +381,130 @@ export const useGameStore = create<GameStore>()(
         }
       },
 
-      // 拖拽操作
-      startDrag: (pieceId: string, offset: { x: number; y: number }) => {
+      flipPieceHorizontally: (pieceId: string) => {
         const state = get();
         const piece = state.availablePieces.find(p => p.id === pieceId);
-        
+
         if (!piece) return;
 
-        const updatedPieces = state.availablePieces.map(p => 
+        const newFlippedState = !piece.isFlippedHorizontally;
+
+        // 如果拼图块已放置，需要检查翻转后是否仍然合法
+        if (piece.isPlaced && piece.position) {
+          const tempShape = getPieceShapeWithTransform(
+            piece.shapeId,
+            piece.rotation,
+            newFlippedState,
+            piece.isFlippedVertically
+          );
+
+          if (!tempShape) return;
+
+          // 检查翻转后是否仍在网格内且不冲突
+          let isValid = true;
+          for (let r = 0; r < tempShape.length && isValid; r++) {
+            for (let c = 0; c < tempShape[r].length && isValid; c++) {
+              if (tempShape[r][c]) {
+                const newPos = {
+                  row: piece.position.row + r,
+                  col: piece.position.col + c
+                };
+
+                if (!isValidPosition(newPos) ||
+                    (isReservedPosition(newPos) &&
+                     (newPos.row === state.dateTarget.targetPositions.month.row &&
+                      newPos.col === state.dateTarget.targetPositions.month.col))) {
+                  isValid = false;
+                }
+              }
+            }
+          }
+
+          if (!isValid) return;
+
+          // 先移除旧位置，再放置新位置
+          get().removePiece(pieceId);
+        }
+
+        // 更新拼图块翻转状态
+        const updatedPieces = state.availablePieces.map(p =>
+          p.id === pieceId ? { ...p, isFlippedHorizontally: newFlippedState } : p
+        );
+
+        set({ availablePieces: updatedPieces });
+
+        // 如果之前已放置，重新放置
+        if (piece.isPlaced && piece.position) {
+          get().placePiece(pieceId, piece.position);
+        }
+      },
+
+      flipPieceVertically: (pieceId: string) => {
+        const state = get();
+        const piece = state.availablePieces.find(p => p.id === pieceId);
+
+        if (!piece) return;
+
+        const newFlippedState = !piece.isFlippedVertically;
+
+        // 如果拼图块已放置，需要检查翻转后是否仍然合法
+        if (piece.isPlaced && piece.position) {
+          const tempShape = getPieceShapeWithTransform(
+            piece.shapeId,
+            piece.rotation,
+            piece.isFlippedHorizontally,
+            newFlippedState
+          );
+
+          if (!tempShape) return;
+
+          // 检查翻转后是否仍在网格内且不冲突
+          let isValid = true;
+          for (let r = 0; r < tempShape.length && isValid; r++) {
+            for (let c = 0; c < tempShape[r].length && isValid; c++) {
+              if (tempShape[r][c]) {
+                const newPos = {
+                  row: piece.position.row + r,
+                  col: piece.position.col + c
+                };
+
+                if (!isValidPosition(newPos) ||
+                    (isReservedPosition(newPos) &&
+                     (newPos.row === state.dateTarget.targetPositions.month.row &&
+                      newPos.col === state.dateTarget.targetPositions.month.col))) {
+                  isValid = false;
+                }
+              }
+            }
+          }
+
+          if (!isValid) return;
+
+          // 先移除旧位置，再放置新位置
+          get().removePiece(pieceId);
+        }
+
+        // 更新拼图块翻转状态
+        const updatedPieces = state.availablePieces.map(p =>
+          p.id === pieceId ? { ...p, isFlippedVertically: newFlippedState } : p
+        );
+
+        set({ availablePieces: updatedPieces });
+
+        // 如果之前已放置，重新放置
+        if (piece.isPlaced && piece.position) {
+          get().placePiece(pieceId, piece.position);
+        }
+      },
+
+      // 拖拽操作
+      startDrag: (pieceId: string, offset: { x: number; y: number }, storageArea?: 'left' | 'right', storageIndex?: number) => {
+        const state = get();
+        const piece = state.availablePieces.find(p => p.id === pieceId);
+
+        if (!piece) return;
+
+        const updatedPieces = state.availablePieces.map(p =>
           p.id === pieceId ? { ...p, isDragging: true } : p
         );
 
@@ -387,25 +516,44 @@ export const useGameStore = create<GameStore>()(
             dragOffset: offset,
             currentGridPosition: null,
             isValidPosition: false,
-            previewCells: []
+            previewCells: [],
+            globalMousePosition: null,
+            isInValidDropZone: false,
+            originalStorageArea: storageArea,
+            originalStorageIndex: storageIndex
           }
         });
       },
 
-      updateDrag: (position: GridPosition) => {
+      updateDrag: (position: GridPosition | null) => {
         const state = get();
         if (!state.dragState.isDragging || !state.dragState.draggedPiece) return;
 
+        // 如果位置为null（拖拽到网格外），设置为无效状态
+        if (position === null) {
+          set({
+            dragState: {
+              ...state.dragState,
+              currentGridPosition: null,
+              isValidPosition: false,
+              previewCells: []
+            }
+          });
+          return;
+        }
+
         const isValid = get().validatePlacement(state.dragState.draggedPiece.id, position);
-        
+
         // 计算预览格子
         const previewCells: GridPosition[] = [];
         if (isValid) {
-          const shape = getPieceShapeWithRotation(
-            state.dragState.draggedPiece.shapeId, 
-            state.dragState.draggedPiece.rotation
+          const shape = getPieceShapeWithTransform(
+            state.dragState.draggedPiece.shapeId,
+            state.dragState.draggedPiece.rotation,
+            state.dragState.draggedPiece.isFlippedHorizontally,
+            state.dragState.draggedPiece.isFlippedVertically
           );
-          
+
           if (shape) {
             for (let r = 0; r < shape.length; r++) {
               for (let c = 0; c < shape[r].length; c++) {
@@ -430,6 +578,31 @@ export const useGameStore = create<GameStore>()(
         });
       },
 
+      updateGlobalDrag: (globalPosition: { x: number; y: number }, isInValidDropZone: boolean) => {
+        const state = get();
+        if (!state.dragState.isDragging) return;
+
+        set({
+          dragState: {
+            ...state.dragState,
+            globalMousePosition: globalPosition,
+            isInValidDropZone
+          }
+        });
+      },
+
+      // 检查拖拽位置是否在正确的存放区域内
+      isInCorrectStorageArea: (_globalPosition: { x: number; y: number }): boolean => {
+        const state = get();
+        if (!state.dragState.isDragging || !state.dragState.draggedPiece || !state.dragState.originalStorageArea) {
+          return false;
+        }
+
+        // 这里需要根据实际的DOM元素位置来判断
+        // 暂时返回false，后续会通过DOM查询来实现
+        return false;
+      },
+
       endDrag: (position?: GridPosition): boolean => {
         const state = get();
         if (!state.dragState.isDragging || !state.dragState.draggedPiece) {
@@ -437,6 +610,7 @@ export const useGameStore = create<GameStore>()(
         }
 
         const pieceId = state.dragState.draggedPiece.id;
+        const wasFromBoard = !state.dragState.originalStorageArea; // 如果没有原始存放区域，说明是从面板拖拽的
         let success = false;
 
         // 尝试放置拼图块
@@ -444,9 +618,17 @@ export const useGameStore = create<GameStore>()(
           success = get().placePiece(pieceId, position);
         }
 
+        // 如果放置失败且拼图块原本是从面板拖拽的，保持未放置状态
+        // 如果是从存放区域拖拽的，会自动回到存放区域（通过availablePieces的状态管理）
+
         // 更新拼图块拖拽状态
-        const updatedPieces = state.availablePieces.map(p => 
-          p.id === pieceId ? { ...p, isDragging: false } : p
+        const updatedPieces = state.availablePieces.map(p =>
+          p.id === pieceId ? {
+            ...p,
+            isDragging: false,
+            // 如果是从面板拖拽且放置失败，保持未放置状态
+            isPlaced: success || (wasFromBoard ? false : p.isPlaced)
+          } : p
         );
 
         set({
@@ -497,7 +679,7 @@ export const useGameStore = create<GameStore>()(
         
         if (!piece) return false;
 
-        const shape = getPieceShapeWithRotation(piece.shapeId, piece.rotation);
+        const shape = getPieceShapeWithTransform(piece.shapeId, piece.rotation, piece.isFlippedHorizontally, piece.isFlippedVertically);
         if (!shape) return false;
 
         // 检查每个格子
@@ -624,6 +806,47 @@ export const useGameStore = create<GameStore>()(
             difficulty
           }
         });
+      },
+
+      // 存放区域管理
+      setStorageAreaRefs: (leftRef: React.RefObject<HTMLDivElement | null>, rightRef: React.RefObject<HTMLDivElement | null>) => {
+        leftStorageRef = leftRef;
+        rightStorageRef = rightRef;
+      },
+
+      setGameBoardRef: (ref: React.RefObject<HTMLCanvasElement | null>) => {
+        gameBoardRef = ref;
+      },
+
+      checkDropZone: (globalPosition: { x: number; y: number }): 'gameboard' | 'left-storage' | 'right-storage' | 'invalid' => {
+        // 检查是否在GameBoard区域
+        if (gameBoardRef?.current) {
+          const gameBoardRect = gameBoardRef.current.getBoundingClientRect();
+          if (globalPosition.x >= gameBoardRect.left && globalPosition.x <= gameBoardRect.right &&
+              globalPosition.y >= gameBoardRect.top && globalPosition.y <= gameBoardRect.bottom) {
+            return 'gameboard';
+          }
+        }
+
+        // 检查是否在左侧存放区域
+        if (leftStorageRef?.current) {
+          const leftRect = leftStorageRef.current.getBoundingClientRect();
+          if (globalPosition.x >= leftRect.left && globalPosition.x <= leftRect.right &&
+              globalPosition.y >= leftRect.top && globalPosition.y <= leftRect.bottom) {
+            return 'left-storage';
+          }
+        }
+
+        // 检查是否在右侧存放区域
+        if (rightStorageRef?.current) {
+          const rightRect = rightStorageRef.current.getBoundingClientRect();
+          if (globalPosition.x >= rightRect.left && globalPosition.x <= rightRect.right &&
+              globalPosition.y >= rightRect.top && globalPosition.y <= rightRect.bottom) {
+            return 'right-storage';
+          }
+        }
+
+        return 'invalid';
       }
     })),
     {

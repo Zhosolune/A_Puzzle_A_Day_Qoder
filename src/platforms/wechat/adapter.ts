@@ -1,2 +1,57 @@
 // 微信小游戏平台适配器
-declare const wx: any;\n\nexport class WechatAdapter {\n  static isWechat(): boolean {\n    return typeof wx !== 'undefined' && wx.getSystemInfo;\n  }\n\n  // 存储相关\n  static setStorage(key: string, data: any): void {\n    if (this.isWechat()) {\n      wx.setStorageSync(key, data);\n    } else {\n      localStorage.setItem(key, JSON.stringify(data));\n    }\n  }\n\n  static getStorage(key: string): any {\n    if (this.isWechat()) {\n      return wx.getStorageSync(key);\n    } else {\n      const item = localStorage.getItem(key);\n      return item ? JSON.parse(item) : null;\n    }\n  }\n\n  // 分享功能\n  static shareGame(data: { title: string; desc: string; imageUrl?: string }): void {\n    if (this.isWechat()) {\n      wx.shareAppMessage({\n        title: data.title,\n        desc: data.desc,\n        imageUrl: data.imageUrl,\n        success: () => console.log('分享成功'),\n        fail: (err: any) => console.error('分享失败', err)\n      });\n    }\n  }\n\n  // 震动反馈\n  static vibrate(type: 'short' | 'long' = 'short'): void {\n    if (this.isWechat()) {\n      if (type === 'short') {\n        wx.vibrateShort();\n      } else {\n        wx.vibrateLong();\n      }\n    }\n  }\n\n  // 显示提示\n  static showToast(title: string, icon: 'success' | 'error' | 'none' = 'none'): void {\n    if (this.isWechat()) {\n      wx.showToast({ title, icon });\n    }\n  }\n}"
+declare const wx: any;
+
+export class WechatAdapter {
+  static isWechat(): boolean {
+    return typeof wx !== 'undefined' && wx.getSystemInfo;
+  }
+
+  // 存储相关
+  static setStorage(key: string, data: any): void {
+    if (this.isWechat()) {
+      wx.setStorageSync(key, data);
+    } else {
+      localStorage.setItem(key, JSON.stringify(data));
+    }
+  }
+
+  static getStorage(key: string): any {
+    if (this.isWechat()) {
+      return wx.getStorageSync(key);
+    } else {
+      const item = localStorage.getItem(key);
+      return item ? JSON.parse(item) : null;
+    }
+  }
+
+  // 分享功能
+  static shareGame(data: { title: string; desc: string; imageUrl?: string }): void {
+    if (this.isWechat()) {
+      wx.shareAppMessage({
+        title: data.title,
+        desc: data.desc,
+        imageUrl: data.imageUrl,
+        success: () => console.log('分享成功'),
+        fail: (err: any) => console.error('分享失败', err)
+      });
+    }
+  }
+
+  // 震动反馈
+  static vibrate(type: 'short' | 'long' = 'short'): void {
+    if (this.isWechat()) {
+      if (type === 'short') {
+        wx.vibrateShort();
+      } else {
+        wx.vibrateLong();
+      }
+    }
+  }
+
+  // 显示提示
+  static showToast(title: string, icon: 'success' | 'error' | 'none' = 'none'): void {
+    if (this.isWechat()) {
+      wx.showToast({ title, icon });
+    }
+  }
+}

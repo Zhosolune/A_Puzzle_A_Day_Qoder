@@ -208,14 +208,48 @@ export function rotatePieceShape(shape: boolean[][], rotation: 0 | 90 | 180 | 27
 export function getPieceShapeWithRotation(pieceId: string, rotation: 0 | 90 | 180 | 270): boolean[][] | null {
   const piece = getPuzzlePieceShape(pieceId);
   if (!piece) return null;
-  
+
   return rotatePieceShape(piece.shape, rotation);
+}
+
+// 获取拼图块在指定变换下的形状（旋转+翻转）
+export function getPieceShapeWithTransform(
+  pieceId: string,
+  rotation: 0 | 90 | 180 | 270,
+  isFlippedHorizontally: boolean = false,
+  isFlippedVertically: boolean = false
+): boolean[][] | null {
+  const piece = getPuzzlePieceShape(pieceId);
+  if (!piece) return null;
+
+  let shape = piece.shape;
+
+  // 先应用翻转
+  if (isFlippedHorizontally) {
+    shape = flipPieceShapeHorizontally(shape);
+  }
+  if (isFlippedVertically) {
+    shape = flipPieceShapeVertically(shape);
+  }
+
+  // 再应用旋转
+  return rotatePieceShape(shape, rotation);
 }
 
 // 计算旋转后的拼图块尺寸
 export function getRotatedPieceDimensions(pieceId: string, rotation: 0 | 90 | 180 | 270): { width: number; height: number } | null {
   const rotatedShape = getPieceShapeWithRotation(pieceId, rotation);
   if (!rotatedShape) return null;
-  
+
   return calculateShapeDimensions(rotatedShape);
+}
+
+// 水平翻转拼图块形状
+export function flipPieceShapeHorizontally(shape: boolean[][]): boolean[][] {
+  return shape.map(row => [...row].reverse());
+}
+
+// 垂直翻转拼图块形状
+export function flipPieceShapeVertically(shape: boolean[][]): boolean[][] {
+  return [...shape].reverse();
 }

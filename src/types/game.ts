@@ -56,6 +56,8 @@ export interface PuzzlePieceState {
   isPlaced: boolean;      // 是否已放置在网格上
   position?: GridPosition; // 放置位置（左上角）
   rotation: 0 | 90 | 180 | 270; // 旋转角度
+  isFlippedHorizontally: boolean; // 是否水平翻转
+  isFlippedVertically: boolean;   // 是否垂直翻转
   isDragging: boolean;    // 是否正在拖拽
   isSelected: boolean;    // 是否被选中
 }
@@ -66,6 +68,8 @@ export interface PlacedPiece {
   shapeId: string;
   position: GridPosition; // 左上角位置
   rotation: 0 | 90 | 180 | 270;
+  isFlippedHorizontally: boolean; // 是否水平翻转
+  isFlippedVertically: boolean;   // 是否垂直翻转
   occupiedCells: GridPosition[]; // 实际占用的格子列表
 }
 
@@ -122,4 +126,11 @@ export interface DragState {
   currentGridPosition: GridPosition | null;
   isValidPosition: boolean;
   previewCells: GridPosition[];     // 预览占用的格子
+  // 全局拖拽坐标（相对于页面）
+  globalMousePosition: { x: number; y: number } | null;
+  // 是否在有效拖拽区域内（GameBoard区域）
+  isInValidDropZone: boolean;
+  // 存放区域信息
+  originalStorageArea?: 'left' | 'right';
+  originalStorageIndex?: number;
 }

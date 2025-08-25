@@ -58,10 +58,13 @@ export interface GameActions {
   placePiece: (pieceId: string, position: GridPosition) => boolean;
   removePiece: (pieceId: string) => void;
   rotatePiece: (pieceId: string) => void;
+  flipPieceHorizontally: (pieceId: string) => void;
+  flipPieceVertically: (pieceId: string) => void;
   
   // 拖拽操作
-  startDrag: (pieceId: string, offset: { x: number; y: number }) => void;
-  updateDrag: (position: GridPosition) => void;
+  startDrag: (pieceId: string, offset: { x: number; y: number }, storageArea?: 'left' | 'right', storageIndex?: number) => void;
+  updateDrag: (position: GridPosition | null) => void;
+  updateGlobalDrag: (globalPosition: { x: number; y: number }, isInValidDropZone: boolean) => void;
   endDrag: (position?: GridPosition) => boolean;
   
   // 游戏验证
@@ -71,6 +74,11 @@ export interface GameActions {
   
   // 辅助功能
   getHint: () => GridPosition | null;
+
+  // 存放区域管理
+  setStorageAreaRefs: (leftRef: React.RefObject<HTMLDivElement | null>, rightRef: React.RefObject<HTMLDivElement | null>) => void;
+  setGameBoardRef: (gameBoardRef: React.RefObject<HTMLCanvasElement | null>) => void;
+  checkDropZone: (globalPosition: { x: number; y: number }) => 'gameboard' | 'left-storage' | 'right-storage' | 'invalid';
   undoLastMove: () => void;
   redoMove: () => void;
   

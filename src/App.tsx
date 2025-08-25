@@ -1,12 +1,16 @@
-import React, { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useGameStore } from './stores/gameStore';
 import { GameBoard } from './components/game/GameBoard';
 import { PuzzlePiece } from './components/game/PuzzlePiece';
+import { GlobalDragPreview } from './components/game/GlobalDragPreview';
 import { Button } from './components/ui/Button';
 import { getDateDisplayText } from './utils/dateUtils';
 import './App.css';
 
 function App() {
+  const leftStorageRef = useRef<HTMLDivElement>(null);
+  const rightStorageRef = useRef<HTMLDivElement>(null);
+
   const {
     status,
     currentDate,
@@ -16,13 +20,19 @@ function App() {
     startNewGame,
     resetGame,
     selectPiece,
-    rotatePiece
+    rotatePiece,
+    setStorageAreaRefs
   } = useGameStore();
 
   // 初始化游戏
   useEffect(() => {
     initializeGame();
   }, [initializeGame]);
+
+  // 设置存放区域引用
+  useEffect(() => {
+    setStorageAreaRefs(leftStorageRef, rightStorageRef);
+  }, [setStorageAreaRefs]);
 
   const handleStartGame = () => {
     startNewGame();
@@ -86,73 +96,93 @@ function App() {
             重置
           </Button>
         </div>
+      </div>
 
-        <div className="flex flex-col items-center">
-          {/* 游戏面板 - 作为主要元素 */}
-          <div className="mb-8">
-            <GameBoard className="mx-auto" />
-          </div>
-
-          {/* 拼图块面板 - 移至底部 */}
-          <div className="w-full max-w-4xl">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4 text-center">
-              拼图块
-            </h2>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* 未放置的拼图块 */}
-              <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="text-sm font-medium text-gray-600 mb-3">可用拼图块</h3>
-                <div className="flex flex-wrap justify-center">
-                  {availablePieces
-                    .filter(piece => !piece.isPlaced)
-                    .map(piece => (
-                      <PuzzlePiece
-                        key={piece.id}
-                        piece={piece}
-                        onSelect={handlePieceSelect}
-                        onRotate={handlePieceRotate}
-                      />
-                    ))
-                  }
+      {/* 桌面端宽屏布局：左侧存放区域 + 中央游戏面板 + 右侧存放区域 */}
+      <div className="flex justify-center items-start gap-8 max-w-7xl mx-auto">
+        {/* 左侧存放区域：拼图块1-5 */}
+        <div className="flex-shrink-0 w-80">
+          <div ref={leftStorageRef} className="bg-white rounded-lg p-4 shadow-sm">
+            <h3 className="text-sm font-medium text-gray-600 mb-3 text-center">存放区域 A</h3>
+            <div className="grid grid-cols-1 gap-3">
+              {availablePieces
+                .slice(0, 5) // 拼图块1-5
+                .filter(piece => !piece.isPlaced) // 只显示未放置的拼图块
+                .map((piece, index) => (
+                  <div key={piece.id} className="flex justify-center">
+                    <PuzzlePiece
+                      piece={piece}
+                      onSelect={handlePieceSelect}
+                      onRotate={handlePieceRotate}
+                      storageArea="left"
+                      storageIndex={index}
+                    />
+                  </div>
+                ))
+              }
+              {/* 显示空位占位符 */}
+              {Array.from({ length: Math.max(0, 5 - availablePieces.slice(0, 5).filter(p => !p.isPlaced).length) }).map((_, index) => (
+                <div key={`empty-left-${index}`} className="flex justify-center">
+                  <div className="w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center">
+                    <span className="text-gray-400 text-xs">空位</span>
+                  </div>
                 </div>
-              </div>
-
-              {/* 已放置的拼图块 */}
-              <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="text-sm font-medium text-gray-600 mb-3">已放置拼图块</h3>
-                <div className="flex flex-wrap justify-center">
-                  {availablePieces
-                    .filter(piece => piece.isPlaced)
-                    .map(piece => (
-                      <PuzzlePiece
-                        key={piece.id}
-                        piece={piece}
-                        onSelect={handlePieceSelect}
-                        onRotate={handlePieceRotate}
-                      />
-                    ))
-                  }
-                </div>
-                {availablePieces.filter(piece => piece.isPlaced).length === 0 && (
-                  <p className="text-gray-400 text-center py-4">暂无已放置的拼图块</p>
-                )}
-              </div>
+              ))}
             </div>
+          </div>
+        </div>
 
-            {/* 游戏说明 */}
-            <div className="mt-4 p-4 bg-blue-50 rounded-lg max-w-md mx-auto">
-              <h3 className="text-sm font-medium text-blue-800 mb-2">游戏说明</h3>
-              <ul className="text-xs text-blue-700 space-y-1">
-                <li>• 点击拼图块选择，双击旋转</li>
-                <li>• 使用拼图块填满网格</li>
-                <li>• 保持日期格子为空</li>
-                <li>• 完成拼图获得胜利</li>
-              </ul>
+        {/* 中央游戏面板 */}
+        <div className="flex-shrink-0">
+          <GameBoard />
+        </div>
+
+        {/* 右侧存放区域：拼图块6-10 */}
+        <div className="flex-shrink-0 w-80">
+          <div ref={rightStorageRef} className="bg-white rounded-lg p-4 shadow-sm">
+            <h3 className="text-sm font-medium text-gray-600 mb-3 text-center">存放区域 B</h3>
+            <div className="grid grid-cols-1 gap-3">
+              {availablePieces
+                .slice(5, 10) // 拼图块6-10
+                .filter(piece => !piece.isPlaced) // 只显示未放置的拼图块
+                .map((piece, index) => (
+                  <div key={piece.id} className="flex justify-center">
+                    <PuzzlePiece
+                      piece={piece}
+                      onSelect={handlePieceSelect}
+                      onRotate={handlePieceRotate}
+                      storageArea="right"
+                      storageIndex={index}
+                    />
+                  </div>
+                ))
+              }
+              {/* 显示空位占位符 */}
+              {Array.from({ length: Math.max(0, 5 - availablePieces.slice(5, 10).filter(p => !p.isPlaced).length) }).map((_, index) => (
+                <div key={`empty-right-${index}`} className="flex justify-center">
+                  <div className="w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center">
+                    <span className="text-gray-400 text-xs">空位</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
       </div>
+
+      {/* 游戏说明 */}
+      <div className="mt-8 p-4 bg-blue-50 rounded-lg max-w-md mx-auto">
+        <h3 className="text-sm font-medium text-blue-800 mb-2">游戏说明</h3>
+        <ul className="text-xs text-blue-700 space-y-1">
+          <li>• 拖拽拼图块到游戏面板</li>
+          <li>• 使用拼图块填满网格</li>
+          <li>• 保持日期格子为空</li>
+          <li>• 完成拼图获得胜利</li>
+        </ul>
+      </div>
+
+      {/* 全局拖拽预览 */}
+      <GlobalDragPreview cellSize={80} gap={4} />
     </div>
   );
 }

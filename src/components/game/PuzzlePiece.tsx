@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import type { PuzzlePieceState } from '../../types';
-import { getPuzzlePieceShape, getPieceShapeWithRotation } from '../../data/puzzlePieces';
+import { getPuzzlePieceShape, getPieceShapeWithTransform } from '../../data/puzzlePieces';
 import { useGameStore } from '../../stores/gameStore';
 
 interface PuzzlePieceProps {
@@ -8,19 +8,29 @@ interface PuzzlePieceProps {
   onSelect?: (pieceId: string) => void;
   onRotate?: (pieceId: string) => void;
   className?: string;
+  // 存放区域信息
+  storageArea?: 'left' | 'right';
+  storageIndex?: number;
 }
 
 export const PuzzlePiece: React.FC<PuzzlePieceProps> = ({
   piece,
   onSelect,
   onRotate,
-  className
+  className,
+  storageArea,
+  storageIndex
 }) => {
   const pieceRef = useRef<HTMLDivElement>(null);
-  const { startDrag } = useGameStore();
+  const { startDrag, rotatePiece, flipPieceHorizontally, flipPieceVertically } = useGameStore();
   
   const pieceShape = getPuzzlePieceShape(piece.shapeId);
-  const rotatedShape = getPieceShapeWithRotation(piece.shapeId, piece.rotation);
+  const rotatedShape = getPieceShapeWithTransform(
+    piece.shapeId,
+    piece.rotation,
+    piece.isFlippedHorizontally || false,
+    piece.isFlippedVertically || false
+  );
   
   if (!pieceShape || !rotatedShape) return null;
 
@@ -37,7 +47,11 @@ export const PuzzlePiece: React.FC<PuzzlePieceProps> = ({
           x: event.clientX - rect.left,
           y: event.clientY - rect.top
         };
-        startDrag(piece.id, offset);
+
+        // 设置拖拽光标
+        document.body.style.cursor = 'grabbing';
+
+        startDrag(piece.id, offset, storageArea, storageIndex);
       }
     }
   };
@@ -86,6 +100,55 @@ export const PuzzlePiece: React.FC<PuzzlePieceProps> = ({
         
         {piece.isSelected && (
           <div className="absolute -top-1 -left-1 w-3 h-3 bg-blue-500 rounded-full"></div>
+        )}
+
+        {/* 选中状态下的悬浮操作按钮 */}
+        {piece.isSelected && !piece.isPlaced && (
+          <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 flex gap-1 bg-white rounded-lg shadow-lg border p-1">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                rotatePiece(piece.id);
+              }}
+              className="w-6 h-6 bg-blue-500 hover:bg-blue-600 text-white rounded text-xs flex items-center justify-center"
+              title="向右旋转90°"
+            >
+              ↻
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                // 向左旋转相当于向右旋转3次
+                rotatePiece(piece.id);
+                rotatePiece(piece.id);
+                rotatePiece(piece.id);
+              }}
+              className="w-6 h-6 bg-blue-500 hover:bg-blue-600 text-white rounded text-xs flex items-center justify-center"
+              title="向左旋转90°"
+            >
+              ↺
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                flipPieceHorizontally(piece.id);
+              }}
+              className="w-6 h-6 bg-green-500 hover:bg-green-600 text-white rounded text-xs flex items-center justify-center"
+              title="水平翻转"
+            >
+              ⟷
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                flipPieceVertically(piece.id);
+              }}
+              className="w-6 h-6 bg-green-500 hover:bg-green-600 text-white rounded text-xs flex items-center justify-center"
+              title="垂直翻转"
+            >
+              ↕
+            </button>
+          </div>
         )}
       </div>
     </div>
