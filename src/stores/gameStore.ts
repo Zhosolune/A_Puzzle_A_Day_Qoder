@@ -1,21 +1,22 @@
 import { create } from 'zustand';
 import { devtools, subscribeWithSelector } from 'zustand/middleware';
-import { 
-  GameStatus, 
+import {
+  GameStatus,
   CellState
 } from '../types';
-import type { 
-  GameStore, 
-  GridCell, 
-  GridPosition, 
+import type {
+  GameStore,
+  GridCell,
+  GridPosition,
   PuzzlePieceState,
   GameStats,
   DragState,
   GameMove,
-  GameDifficulty 
+  GameDifficulty,
+  PlacedPiece
 } from '../types';
 import { PUZZLE_PIECES, getPieceShapeWithTransform } from '../data/puzzlePieces';
-import { GRID_LAYOUT, isReservedPosition, isValidPosition, getPositionLabel } from '../data/gridLayout';
+import { GRID_LAYOUT, isReservedPosition, isValidPosition, getPositionLabel, isBlockedPosition } from '../data/gridLayout';
 import { getCurrentDate, generateDateTarget } from '../utils/dateUtils';
 
 // 初始拖拽状态
@@ -49,13 +50,13 @@ const initialStats: GameStats = {
 // 创建初始网格
 function createInitialGrid(): GridCell[][] {
   const grid: GridCell[][] = [];
-  
+
   for (let row = 0; row < GRID_LAYOUT.height; row++) {
     grid[row] = [];
     for (let col = 0; col < GRID_LAYOUT.width; col++) {
       const position: GridPosition = { row, col };
       const isReserved = isReservedPosition(position);
-      
+
       grid[row][col] = {
         position,
         state: isReserved ? CellState.RESERVED : CellState.EMPTY,
@@ -63,7 +64,7 @@ function createInitialGrid(): GridCell[][] {
       };
     }
   }
-  
+
   return grid;
 }
 
@@ -91,6 +92,27 @@ function generateMoveId(): string {
   return `move_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+// 基于 placedPieces 重建网格占用（支持重叠，后放置覆盖前者的pieceId）
+function rebuildGridFromPlacedPieces(placed: Map<string, PlacedPiece>): GridCell[][] {
+  const baseGrid = createInitialGrid();
+
+  // 按插入顺序覆盖，占用状态为 OCCUPIED，pieceId 为最后覆盖者
+  for (const [, placedPiece] of placed) {
+    for (const pos of placedPiece.occupiedCells) {
+      if (isValidPosition(pos)) {
+        const cell = baseGrid[pos.row][pos.col];
+        // 目标/阻塞格子仍保持其状态，不允许覆盖
+        if (cell.state === CellState.RESERVED || cell.state === CellState.BLOCKED) continue;
+        cell.state = CellState.OCCUPIED;
+        cell.pieceId = placedPiece.pieceId;
+      }
+    }
+  }
+
+  return baseGrid;
+}
+
+
 // 创建游戏Store
 export const useGameStore = create<GameStore>()(
   devtools(
@@ -115,7 +137,7 @@ export const useGameStore = create<GameStore>()(
       // 游戏控制方法
       initializeGame: (date = getCurrentDate()) => {
         const target = generateDateTarget(date);
-        
+
         set({
           currentDate: date,
           dateTarget: target,
@@ -161,33 +183,33 @@ export const useGameStore = create<GameStore>()(
       // 拼图块操作
       selectPiece: (pieceId: string) => {
         set({ selectedPieceId: pieceId });
-        
+
         // 更新拼图块选中状态
         const state = get();
         const updatedPieces = state.availablePieces.map(piece => ({
           ...piece,
           isSelected: piece.id === pieceId
         }));
-        
+
         set({ availablePieces: updatedPieces });
       },
 
       deselectPiece: () => {
         set({ selectedPieceId: null });
-        
+
         const state = get();
         const updatedPieces = state.availablePieces.map(piece => ({
           ...piece,
           isSelected: false
         }));
-        
+
         set({ availablePieces: updatedPieces });
       },
 
       placePiece: (pieceId: string, position: GridPosition): boolean => {
         const state = get();
-        
-        // 验证放置是否合法
+
+        // 放宽验证：仅检查边界与目标格子，不检查与其他拼图块的重叠
         if (!get().validatePlacement(pieceId, position)) {
           return false;
         }
@@ -200,37 +222,34 @@ export const useGameStore = create<GameStore>()(
         const shape = getPieceShapeWithTransform(piece.shapeId, piece.rotation, piece.isFlippedHorizontally, piece.isFlippedVertically);
         if (!shape) return false;
 
-        // 计算占用的格子
+        // 计算占用的格子（仅记录有效区域内，且不包含阻塞/当天目标格子的格子）
         const occupiedCells: GridPosition[] = [];
+        const { month, day, weekday } = state.dateTarget.targetPositions;
         for (let r = 0; r < shape.length; r++) {
           for (let c = 0; c < shape[r].length; c++) {
             if (shape[r][c]) {
-              occupiedCells.push({
-                row: position.row + r,
-                col: position.col + c
-              });
+              const cellPos = { row: position.row + r, col: position.col + c };
+              if (!isValidPosition(cellPos)) continue;
+              const isTarget = (cellPos.row === month.row && cellPos.col === month.col) ||
+                               (cellPos.row === day.row && cellPos.col === day.col) ||
+                               (cellPos.row === weekday.row && cellPos.col === weekday.col);
+              if (!isBlockedPosition(cellPos) && !isTarget) {
+                occupiedCells.push(cellPos);
+              }
             }
           }
         }
 
-        // 更新网格状态
-        const newGrid = state.gridCells.map(row => row.map(cell => ({ ...cell })));
-        occupiedCells.forEach(pos => {
-          if (isValidPosition(pos)) {
-            newGrid[pos.row][pos.col].state = CellState.OCCUPIED;
-            newGrid[pos.row][pos.col].pieceId = pieceId;
-          }
-        });
-
         // 更新拼图块状态
-        const updatedPieces = state.availablePieces.map(p => 
-          p.id === pieceId 
+        const updatedPieces = state.availablePieces.map(p =>
+          p.id === pieceId
             ? { ...p, isPlaced: true, position, isDragging: false, isSelected: false }
             : p
         );
 
-        // 添加已放置的拼图块记录
+        // 添加已放置的拼图块记录（维护层级：zIndex 递增）
         const newPlacedPieces = new Map(state.placedPieces);
+        const nextZ = newPlacedPieces.size + 1;
         newPlacedPieces.set(pieceId, {
           pieceId,
           shapeId: piece.shapeId,
@@ -238,8 +257,12 @@ export const useGameStore = create<GameStore>()(
           rotation: piece.rotation,
           isFlippedHorizontally: piece.isFlippedHorizontally,
           isFlippedVertically: piece.isFlippedVertically,
-          occupiedCells
+          occupiedCells,
+          zIndex: nextZ
         });
+
+        // 基于 placedPieces 重建网格占用（支持重叠，后放置覆盖前者）
+        const newGrid = rebuildGridFromPlacedPieces(newPlacedPieces);
 
         // 记录移动
         const move: GameMove = {
@@ -268,7 +291,7 @@ export const useGameStore = create<GameStore>()(
 
         // 检查胜利条件
         if (get().checkWinCondition()) {
-          set({ 
+          set({
             status: GameStatus.COMPLETED,
             currentStats: {
               ...newStats,
@@ -283,24 +306,17 @@ export const useGameStore = create<GameStore>()(
       removePiece: (pieceId: string) => {
         const state = get();
         const placedPiece = state.placedPieces.get(pieceId);
-        
+
         if (!placedPiece) return;
 
-        // 更新网格状态 - 清除占用
-        const newGrid = state.gridCells.map(row => row.map(cell => ({ ...cell })));
-        placedPiece.occupiedCells.forEach(pos => {
-          if (isValidPosition(pos)) {
-            const cell = newGrid[pos.row][pos.col];
-            if (cell.pieceId === pieceId) {
-              cell.state = isReservedPosition(pos) ? CellState.RESERVED : CellState.EMPTY;
-              delete cell.pieceId;
-            }
-          }
-        });
+        // 更新网格状态 - 清除该拼图块，并重建占用（考虑重叠）
+        const tempPlaced = new Map(state.placedPieces);
+        tempPlaced.delete(pieceId);
+        const newGrid = rebuildGridFromPlacedPieces(tempPlaced);
 
         // 更新拼图块状态
-        const updatedPieces = state.availablePieces.map(p => 
-          p.id === pieceId 
+        const updatedPieces = state.availablePieces.map(p =>
+          p.id === pieceId
             ? { ...p, isPlaced: false, position: undefined }
             : p
         );
@@ -329,17 +345,17 @@ export const useGameStore = create<GameStore>()(
       rotatePiece: (pieceId: string) => {
         const state = get();
         const piece = state.availablePieces.find(p => p.id === pieceId);
-        
+
         if (!piece) return;
 
         const newRotation = ((piece.rotation + 90) % 360) as 0 | 90 | 180 | 270;
-        
+
         // 如果拼图块已放置，需要检查旋转后是否仍然合法
         if (piece.isPlaced && piece.position) {
           // 临时更新旋转角度来检查
           const tempPiece = { ...piece, rotation: newRotation };
           const tempShape = getPieceShapeWithTransform(tempPiece.shapeId, newRotation, piece.isFlippedHorizontally, piece.isFlippedVertically);
-          
+
           if (!tempShape) return;
 
           // 检查旋转后是否仍在网格内且不冲突
@@ -351,9 +367,9 @@ export const useGameStore = create<GameStore>()(
                   row: piece.position.row + r,
                   col: piece.position.col + c
                 };
-                
-                if (!isValidPosition(newPos) || 
-                    (isReservedPosition(newPos) && 
+
+                if (!isValidPosition(newPos) ||
+                    (isReservedPosition(newPos) &&
                      (newPos.row === state.dateTarget.targetPositions.month.row &&
                       newPos.col === state.dateTarget.targetPositions.month.col))) {
                   isValid = false;
@@ -369,7 +385,7 @@ export const useGameStore = create<GameStore>()(
         }
 
         // 更新拼图块旋转角度
-        const updatedPieces = state.availablePieces.map(p => 
+        const updatedPieces = state.availablePieces.map(p =>
           p.id === pieceId ? { ...p, rotation: newRotation } : p
         );
 
@@ -542,6 +558,7 @@ export const useGameStore = create<GameStore>()(
           return;
         }
 
+        // 放宽校验：边界和目标格子；重叠无阻挡
         const isValid = get().validatePlacement(state.dragState.draggedPiece.id, position);
 
         // 计算预览格子
@@ -613,7 +630,7 @@ export const useGameStore = create<GameStore>()(
         const wasFromBoard = !state.dragState.originalStorageArea; // 如果没有原始存放区域，说明是从面板拖拽的
         let success = false;
 
-        // 尝试放置拼图块
+        // 允许重叠放置：仅在边界/目标格子合法时放置
         if (position && get().validatePlacement(pieceId, position)) {
           success = get().placePiece(pieceId, position);
         }
@@ -643,16 +660,16 @@ export const useGameStore = create<GameStore>()(
       checkWinCondition: (): boolean => {
         const state = get();
         const { month, day, weekday } = state.dateTarget.targetPositions;
-        
+
         // 检查目标位置是否为空
         const monthCell = state.gridCells[month.row][month.col];
         const dayCell = state.gridCells[day.row][day.col];
         const weekdayCell = state.gridCells[weekday.row][weekday.col];
-        
+
         const isMonthEmpty = monthCell.state === CellState.RESERVED;
         const isDayEmpty = dayCell.state === CellState.RESERVED;
         const isWeekdayEmpty = weekdayCell.state === CellState.RESERVED;
-        
+
         // 检查所有非目标位置是否都被占用
         let allNonTargetsFilled = true;
         for (let row = 0; row < GRID_LAYOUT.height; row++) {
@@ -661,7 +678,7 @@ export const useGameStore = create<GameStore>()(
             const isTargetCell = (row === month.row && col === month.col) ||
                                (row === day.row && col === day.col) ||
                                (row === weekday.row && col === weekday.col);
-            
+
             if (!isTargetCell && cell.state === CellState.EMPTY) {
               allNonTargetsFilled = false;
               break;
@@ -669,59 +686,56 @@ export const useGameStore = create<GameStore>()(
           }
           if (!allNonTargetsFilled) break;
         }
-        
+
         return isMonthEmpty && isDayEmpty && isWeekdayEmpty && allNonTargetsFilled;
       },
 
       validatePlacement: (pieceId: string, position: GridPosition): boolean => {
         const state = get();
         const piece = state.availablePieces.find(p => p.id === pieceId);
-        
         if (!piece) return false;
 
-        const shape = getPieceShapeWithTransform(piece.shapeId, piece.rotation, piece.isFlippedHorizontally, piece.isFlippedVertically);
+        const shape = getPieceShapeWithTransform(
+          piece.shapeId,
+          piece.rotation,
+          piece.isFlippedHorizontally,
+          piece.isFlippedVertically
+        );
         if (!shape) return false;
 
-        // 检查每个格子
+        // 宽松面积比例判断：仅对落在有效区域的格子计数；禁止覆盖目标/阻塞格
+        let totalCells = 0;
+        let inBoundsValidCells = 0;
         for (let r = 0; r < shape.length; r++) {
           for (let c = 0; c < shape[r].length; c++) {
-            if (shape[r][c]) {
-              const cellPos = {
-                row: position.row + r,
-                col: position.col + c
-              };
-
-              // 检查是否在网格范围内
-              if (!isValidPosition(cellPos)) {
+            if (!shape[r][c]) continue;
+            totalCells += 1;
+            const cellPos = { row: position.row + r, col: position.col + c };
+            if (isValidPosition(cellPos)) {
+              // 不允许覆盖阻塞格子或当天目标格子（月份/日期/星期）
+              const isTargetCell = (
+                cellPos.row === state.dateTarget.targetPositions.month.row && cellPos.col === state.dateTarget.targetPositions.month.col
+              ) || (
+                cellPos.row === state.dateTarget.targetPositions.day.row && cellPos.col === state.dateTarget.targetPositions.day.col
+              ) || (
+                cellPos.row === state.dateTarget.targetPositions.weekday.row && cellPos.col === state.dateTarget.targetPositions.weekday.col
+              );
+              if (isBlockedPosition(cellPos) || isTargetCell) {
                 return false;
               }
-
-              const cell = state.gridCells[cellPos.row][cellPos.col];
-              
-              // 检查格子是否已被其他拼图块占用
-              if (cell.state === CellState.OCCUPIED && cell.pieceId !== pieceId) {
-                return false;
-              }
-
-              // 检查是否覆盖了目标格子
-              const { month, day, weekday } = state.dateTarget.targetPositions;
-              const isTargetCell = (cellPos.row === month.row && cellPos.col === month.col) ||
-                                 (cellPos.row === day.row && cellPos.col === day.col) ||
-                                 (cellPos.row === weekday.row && cellPos.col === weekday.col);
-              
-              if (isTargetCell) {
-                return false;
-              }
+              inBoundsValidCells += 1;
             }
           }
         }
 
-        return true;
+        if (totalCells === 0) return false;
+        const ratio = inBoundsValidCells / totalCells;
+        return ratio >= 0.5; // >=50% 在有效区域内则允许
       },
 
       getAvailablePositions: (pieceId: string): GridPosition[] => {
         const availablePositions: GridPosition[] = [];
-        
+
         for (let row = 0; row < GRID_LAYOUT.height; row++) {
           for (let col = 0; col < GRID_LAYOUT.width; col++) {
             const position = { row, col };
@@ -730,22 +744,22 @@ export const useGameStore = create<GameStore>()(
             }
           }
         }
-        
+
         return availablePositions;
       },
 
       // 辅助功能
       getHint: (): GridPosition | null => {
         const state = get();
-        
+
         // 找到第一个未放置的拼图块
         const unplacedPiece = state.availablePieces.find(p => !p.isPlaced);
         if (!unplacedPiece) return null;
-        
+
         // 获取该拼图块的可用位置
         const availablePositions = get().getAvailablePositions(unplacedPiece.id);
         if (availablePositions.length === 0) return null;
-        
+
         // 更新提示使用计数
         set({
           currentStats: {
@@ -753,20 +767,20 @@ export const useGameStore = create<GameStore>()(
             hintsUsed: state.currentStats.hintsUsed + 1
           }
         });
-        
+
         return availablePositions[0];
       },
 
       undoLastMove: () => {
         const state = get();
         if (state.moveHistory.length === 0) return;
-        
+
         const lastMove = state.moveHistory[state.moveHistory.length - 1];
-        
+
         if (lastMove.type === 'place') {
           get().removePiece(lastMove.pieceId);
         }
-        
+
         // 移除最后一个移动记录
         set({
           moveHistory: state.moveHistory.slice(0, -1)

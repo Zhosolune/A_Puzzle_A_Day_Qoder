@@ -71,6 +71,7 @@ export interface PlacedPiece {
   isFlippedHorizontally: boolean; // 是否水平翻转
   isFlippedVertically: boolean;   // 是否垂直翻转
   occupiedCells: GridPosition[]; // 实际占用的格子列表
+  zIndex: number; // 放置顺序（后放置的值更大）
 }
 
 // 日期目标配置

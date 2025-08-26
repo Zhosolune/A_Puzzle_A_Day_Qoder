@@ -36,7 +36,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
   useEffect(() => {
     setGameBoardRef(canvasRef);
   }, [setGameBoardRef]);
-  
+
   // 精确尺寸规格配置
   const CELL_SIZE = 80;        // 方块边长（包含1px边框）
   const GAP = 4;               // 方块间隔
@@ -44,10 +44,13 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
   const OUTLINE_SPACING = 4;   // 轮廓线内边缘到方块外边缘的间距
   const OUTLINE_CENTER_OFFSET = OUTLINE_SPACING + OUTLINE_WIDTH / 2; // 轮廓线中心到方块边缘的距离 (2 + 2 = 4px)
 
-  // Canvas边距：确保轮廓线完全在Canvas内部
-  const CANVAS_MARGIN = OUTLINE_CENTER_OFFSET + OUTLINE_WIDTH / 2; // 轮廓线外边缘到Canvas边缘的距离 (4 + 2 = 6px)
+  // 为越界渲染预留的缓冲格数（左右上下各预留）
+  const OVERSCAN_CELLS = 5;
 
-  // Canvas尺寸计算：网格内容 + 两侧边距
+  // Canvas边距：确保轮廓线完全在Canvas内部 + 允许越界可见
+  const CANVAS_MARGIN = OUTLINE_CENTER_OFFSET + OUTLINE_WIDTH / 2 + OVERSCAN_CELLS * (CELL_SIZE + GAP);
+
+  // Canvas尺寸计算：网格内容 + 两侧边距（含 overscan）
   const gridContentWidth = GRID_CONFIG.WIDTH * (CELL_SIZE + GAP) - GAP;
   const gridContentHeight = GRID_CONFIG.HEIGHT * (CELL_SIZE + GAP) - GAP;
   const canvasWidth = gridContentWidth + 2 * CANVAS_MARGIN;
@@ -154,7 +157,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
 
     ctx.restore();
   }, [generateOutlinePath]);
-  
+
   // 检查网格位置是否应该显示（不显示阻塞的格子）
   const shouldRenderCell = useCallback((position: GridPosition): boolean => {
     return !isBlockedPosition(position);
@@ -179,6 +182,27 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
     return null;
   }, []);
 
+  // 获取位于某网格位置的顶层拼图块（按 zIndex 最大优先）
+  const getTopPlacedPieceAt = useCallback((position: GridPosition): string | null => {
+    let topId: string | null = null;
+    let topZ = -Infinity;
+    for (const [pieceId, placedPiece] of placedPieces) {
+      const isInPiece = placedPiece.occupiedCells.some(cell => cell.row === position.row && cell.col === position.col);
+      if (isInPiece) {
+        const z = (placedPiece as any).zIndex ?? 0;
+        if (z > topZ) {
+          topZ = z;
+          topId = pieceId;
+        } else if (z === topZ) {
+          // 同层级时，后出现（插入更晚）的覆盖前者
+          topId = pieceId;
+        }
+      }
+    }
+    return topId;
+  }, [placedPieces]);
+
+
   // 检测鼠标位置是否在已放置的拼图块上
   const getPlacedPieceAtPosition = useCallback((position: GridPosition): string | null => {
     for (const [pieceId, placedPiece] of placedPieces) {
@@ -201,7 +225,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
 
   // 处理鼠标离开
   const handleCanvasMouseLeave = useCallback(() => {
-    setHoveredCell(null);
+    // 优化：保持最后一个有效预览，不清空 hoveredCell
+    // 如果需要强制显示“无效”提示，可在 drawPreview 中根据 dragState.isInValidDropZone 决定颜色
   }, []);
 
   // 处理鼠标按下 - 支持已放置拼图块的重新拖拽
@@ -209,8 +234,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
     const position = getGridPositionFromMouseEvent(event);
     if (!position) return;
 
-    // 检查是否点击了已放置的拼图块
-    const clickedPieceId = getPlacedPieceAtPosition(position);
+    // 检查是否点击了已放置的拼图块（取顶层）
+    const clickedPieceId = getTopPlacedPieceAt(position) || getPlacedPieceAtPosition(position);
     if (clickedPieceId) {
       // 找到对应的拼图块数据
       const placedPiece = placedPieces.get(clickedPieceId);
@@ -253,27 +278,26 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
     );
 
     if (!pieceShape || !rotatedShape) return;
-    
+
     for (let r = 0; r < rotatedShape.length; r++) {
       for (let c = 0; c < rotatedShape[r].length; c++) {
         if (rotatedShape[r][c]) {
           const cellRow = placedPiece.position.row + r;
           const cellCol = placedPiece.position.col + c;
-          
-          if (cellRow >= 0 && cellRow < GRID_CONFIG.HEIGHT && cellCol >= 0 && cellCol < GRID_CONFIG.WIDTH) {
-            const cellPos = getCellCanvasPosition(cellRow, cellCol);
-            const x = cellPos.x;
-            const y = cellPos.y;
-            
-            // 绘制拼图块格子
-            ctx.fillStyle = pieceShape.color;
-            ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-            
-            // 绘制拼图块边框
-            ctx.strokeStyle = '#333';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
-          }
+
+          // 允许越界渲染：不再限制网格范围，直接绘制在扩展后的Canvas上
+          const cellPos = getCellCanvasPosition(cellRow, cellCol);
+          const x = cellPos.x;
+          const y = cellPos.y;
+
+          // 绘制拼图块格子
+          ctx.fillStyle = pieceShape.color;
+          ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+
+          // 绘制拼图块边框
+          ctx.strokeStyle = '#333';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
         }
       }
     }
@@ -319,24 +343,23 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
           const cellRow = previewPosition.row + r;
           const cellCol = previewPosition.col + c;
 
-          if (cellRow >= 0 && cellRow < GRID_CONFIG.HEIGHT && cellCol >= 0 && cellCol < GRID_CONFIG.WIDTH) {
-            const cellPos = getCellCanvasPosition(cellRow, cellCol);
-            const x = cellPos.x;
-            const y = cellPos.y;
+          // 允许越界预览：不再限制网格范围
+          const cellPos = getCellCanvasPosition(cellRow, cellCol);
+          const x = cellPos.x;
+          const y = cellPos.y;
 
-            // 根据是否有效显示不同颜色，拖拽时颜色更鲜艳
-            if (dragState.isDragging) {
-              ctx.fillStyle = isValid ? '#10b981' : '#f87171'; // 更鲜艳的绿色和红色
-              ctx.strokeStyle = isValid ? '#059669' : '#dc2626';
-            } else {
-              ctx.fillStyle = isValid ? '#22d3ee' : '#ef4444';
-              ctx.strokeStyle = isValid ? '#0891b2' : '#dc2626';
-            }
-
-            ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+          // 根据是否有效显示不同颜色，拖拽时颜色更鲜艳
+          if (dragState.isDragging) {
+            ctx.fillStyle = isValid ? '#10b981' : '#f87171'; // 更鲜艳的绿色和红色
+            ctx.strokeStyle = isValid ? '#059669' : '#dc2626';
+          } else {
+            ctx.fillStyle = isValid ? '#22d3ee' : '#ef4444';
+            ctx.strokeStyle = isValid ? '#0891b2' : '#dc2626';
           }
+
+          ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
         }
       }
     }
@@ -347,28 +370,28 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
   // 绘制网格
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-    
+
     // 不绘制整个Canvas背景，让其保持透明，突出不规则游戏区域形状
-    
+
     // 绘制网格单元（只绘制有效格子）
     for (let row = 0; row < GRID_CONFIG.HEIGHT; row++) {
       for (let col = 0; col < GRID_CONFIG.WIDTH; col++) {
         const position = { row, col };
-        
+
         // 跳过不应该显示的格子（阻塞格子）
         if (!shouldRenderCell(position)) {
           continue;
         }
-        
+
         const cellPos = getCellCanvasPosition(row, col);
         const x = cellPos.x;
         const y = cellPos.y;
         const cell = gridCells[row][col];
-        
+
         // 设置单元格颜色
         let fillColor = GRID_RENDER_CONFIG.colors.cellDefault;
         let strokeColor = GRID_RENDER_CONFIG.colors.borderDefault;
-        
+
         switch (cell.state) {
           case CellState.RESERVED:
             fillColor = GRID_RENDER_CONFIG.colors.cellReserved;
@@ -379,53 +402,123 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
           default:
             break;
         }
-        
+
         // 检查是否为目标单元格
-        const isTargetCell = 
+        const isTargetCell =
           (row === dateTarget.targetPositions.month.row && col === dateTarget.targetPositions.month.col) ||
           (row === dateTarget.targetPositions.day.row && col === dateTarget.targetPositions.day.col) ||
           (row === dateTarget.targetPositions.weekday.row && col === dateTarget.targetPositions.weekday.col);
-        
+
         if (isTargetCell) {
           fillColor = GRID_RENDER_CONFIG.colors.cellTarget;
           strokeColor = GRID_RENDER_CONFIG.colors.borderTarget;
         }
-        
+
         // 绘制单元格
         ctx.fillStyle = fillColor;
         ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-        
+
         // 绘制边框
         if (showGrid) {
           ctx.strokeStyle = strokeColor;
           ctx.lineWidth = 1;
           ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
         }
-        
+
         // 绘制标签文本
+
+
         if (cell.label) {
           ctx.fillStyle = isTargetCell ? GRID_RENDER_CONFIG.colors.textTarget : GRID_RENDER_CONFIG.colors.textDefault;
           ctx.font = `${GRID_RENDER_CONFIG.font.weight} ${GRID_RENDER_CONFIG.font.size + 2}px ${GRID_RENDER_CONFIG.font.family}`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          
+
           const textX = x + CELL_SIZE / 2;
           const textY = y + CELL_SIZE / 2;
-          
+
           ctx.fillText(cell.label, textX, textY);
         }
       }
     }
-    
+
     // 绘制已放置的拼图块（排除正在拖拽的拼图块）
-    Array.from(placedPieces.values()).forEach((placedPiece) => {
-      // 如果这个拼图块正在被拖拽，不在面板上绘制
-      if (dragState.isDragging && dragState.draggedPiece?.id === placedPiece.pieceId) {
-        return;
-      }
-      drawPuzzlePiece(ctx, placedPiece);
+    // 按 zIndex 从小到大绘制，后放置的自然在上层
+    Array.from(placedPieces.values())
+      .sort((a: any, b: any) => (a.zIndex || 0) - (b.zIndex || 0))
+      .forEach((placedPiece) => {
+        if (dragState.isDragging && dragState.draggedPiece?.id === placedPiece.pieceId) {
+          return;
+        }
+        drawPuzzlePiece(ctx, placedPiece);
+      });
+
+    // 绘制重叠高亮：为发生碰撞的拼图块画红色外框（连续轮廓），并标注重叠格子
+    const overlappingPieces = Array.from(placedPieces.values()).filter((p: any) => {
+      return Array.from(placedPieces.values()).some((q: any) => {
+        if (q.pieceId === p.pieceId) return false;
+        return p.occupiedCells.some((cell: any) => q.occupiedCells.some((c: any) => c.row === cell.row && c.col === cell.col));
+      });
     });
-    
+
+    const drawContinuousOutline = (ctx: CanvasRenderingContext2D, cells: {row: number; col: number}[]) => {
+      // 基于单元格集计算外轮廓：找出每个单元格四条边中“暴露”的边，组合成多段路径
+      const edges = new Map<string, { x1: number; y1: number; x2: number; y2: number }>();
+      const keyOf = (x1: number, y1: number, x2: number, y2: number) => `${x1},${y1}-${x2},${y2}`;
+      const sameEdgeKey = (x1: number, y1: number, x2: number, y2: number) => `${x2},${y2}-${x1},${y1}`;
+
+      cells.forEach(cell => {
+        const { x, y } = getCellCanvasPosition(cell.row, cell.col);
+        const l = x, r = x + CELL_SIZE, t = y, b = y + CELL_SIZE;
+        const cellEdges = [
+          { x1: l, y1: t, x2: r, y2: t }, // top
+          { x1: r, y1: t, x2: r, y2: b }, // right
+          { x1: r, y1: b, x2: l, y2: b }, // bottom
+          { x1: l, y1: b, x2: l, y2: t }  // left
+        ];
+        cellEdges.forEach(e => {
+          const k = keyOf(e.x1, e.y1, e.x2, e.y2);
+          const rk = sameEdgeKey(e.x1, e.y1, e.x2, e.y2);
+          if (edges.has(rk)) {
+            // 与相邻单元共享的边：删除，避免内部边被描边
+            edges.delete(rk);
+          } else {
+            edges.set(k, e);
+          }
+        });
+      });
+
+      // 将边绘制为连续路径（简单相连：分组连接）
+      ctx.save();
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      edges.forEach(e => {
+        ctx.moveTo(e.x1, e.y1);
+        ctx.lineTo(e.x2, e.y2);
+      });
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    overlappingPieces.forEach((p: any) => {
+      const overlaps = Array.from(placedPieces.values())
+        .filter((q: any) => q.pieceId !== p.pieceId)
+        .flatMap((q: any) => p.occupiedCells.filter((cell: any) => q.occupiedCells.some((c: any) => c.row === cell.row && c.col === cell.col)));
+
+      // 连续外轮廓
+      drawContinuousOutline(ctx, p.occupiedCells);
+
+      // 重叠区域半透明覆盖
+      ctx.save();
+      ctx.fillStyle = 'rgba(220, 38, 38, 0.35)';
+      overlaps.forEach((cell: any) => {
+        const cellPos = getCellCanvasPosition(cell.row, cell.col);
+        ctx.fillRect(cellPos.x, cellPos.y, CELL_SIZE, CELL_SIZE);
+      });
+      ctx.restore();
+    });
+
     // 绘制预览
     drawPreview(ctx);
     // 绘制沿着网格轮廓的边框
@@ -467,17 +560,17 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
           const isInCanvas = x >= 0 && y >= 0 && x <= rect.width && y <= rect.height;
 
           if (isInCanvas) {
-            const col = Math.floor((x - CANVAS_MARGIN) / (CELL_SIZE + GAP));
-            const row = Math.floor((y - CANVAS_MARGIN) / (CELL_SIZE + GAP));
+            // 将鼠标位置减去拖拽起始偏移，得到拼图块锚点（形状左上角）在Canvas内的坐标
+            const anchorX = x - dragState.dragOffset.x;
+            const anchorY = y - dragState.dragOffset.y;
 
-            // 检查是否在网格范围内
-            if (row >= 0 && row < GRID_CONFIG.HEIGHT && col >= 0 && col < GRID_CONFIG.WIDTH) {
-              updateDrag({ row, col });
-              document.body.style.cursor = 'grabbing';
-            } else {
-              updateDrag(null);
-              document.body.style.cursor = 'not-allowed';
-            }
+            const col = Math.floor((anchorX - CANVAS_MARGIN) / (CELL_SIZE + GAP));
+            const row = Math.floor((anchorY - CANVAS_MARGIN) / (CELL_SIZE + GAP));
+
+            // 允许锚点在网格外，由 validatePlacement 按面积比例判断；
+            // 这里直接传递 row/col（可为负或超界），以支持部分越界放置
+            updateDrag({ row, col });
+            document.body.style.cursor = 'grabbing';
           } else {
             updateDrag(null);
             document.body.style.cursor = 'not-allowed';
@@ -525,14 +618,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
             const isInCanvas = x >= 0 && y >= 0 && x <= rect.width && y <= rect.height;
 
             if (isInCanvas) {
-              const col = Math.floor((x - CANVAS_MARGIN) / (CELL_SIZE + GAP));
-              const row = Math.floor((y - CANVAS_MARGIN) / (CELL_SIZE + GAP));
+              // 将鼠标位置减去拖拽起始偏移，得到拼图块锚点（形状左上角）在Canvas内的坐标
+              const anchorX = x - dragState.dragOffset.x;
+              const anchorY = y - dragState.dragOffset.y;
 
-              if (row >= 0 && row < GRID_CONFIG.HEIGHT && col >= 0 && col < GRID_CONFIG.WIDTH) {
-                endDrag({ row, col });
-              } else {
-                endDrag(); // 在Canvas内但不在网格范围内，取消放置
-              }
+              const col = Math.floor((anchorX - CANVAS_MARGIN) / (CELL_SIZE + GAP));
+              const row = Math.floor((anchorY - CANVAS_MARGIN) / (CELL_SIZE + GAP));
+
+              // 允许部分越界，由 validatePlacement 按面积比例判断
+              endDrag({ row, col });
             } else {
               endDrag(); // 不在Canvas区域内，取消放置
             }
