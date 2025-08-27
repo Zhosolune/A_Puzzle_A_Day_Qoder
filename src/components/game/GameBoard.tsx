@@ -45,7 +45,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
   const OUTLINE_CENTER_OFFSET = OUTLINE_SPACING + OUTLINE_WIDTH / 2; // 轮廓线中心到方块边缘的距离 (2 + 2 = 4px)
 
   // 为越界渲染预留的缓冲格数（左右上下各预留）
-  const OVERSCAN_CELLS = 5;
+  const OVERSCAN_CELLS = 1;
 
   // Canvas边距：确保轮廓线完全在Canvas内部 + 允许越界可见
   const CANVAS_MARGIN = OUTLINE_CENTER_OFFSET + OUTLINE_WIDTH / 2 + OVERSCAN_CELLS * (CELL_SIZE + GAP);
@@ -334,6 +334,23 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
 
     if (!rotatedShape) return;
 
+    // 面板外预览隐藏：若所有格子都越界，则不绘制预览
+    const allOut = (() => {
+      for (let r = 0; r < rotatedShape.length; r++) {
+        for (let c = 0; c < rotatedShape[r].length; c++) {
+          if (rotatedShape[r][c]) {
+            const rr = previewPosition.row + r;
+            const cc = previewPosition.col + c;
+            if (rr >= 0 && rr < GRID_CONFIG.HEIGHT && cc >= 0 && cc < GRID_CONFIG.WIDTH) {
+              return false;
+            }
+          }
+        }
+      }
+      return true;
+    })();
+    if (allOut) return;
+
     // 绘制预览，拖拽时透明度更高
     ctx.globalAlpha = dragState.isDragging ? 0.7 : 0.5;
 
@@ -560,17 +577,75 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
           const isInCanvas = x >= 0 && y >= 0 && x <= rect.width && y <= rect.height;
 
           if (isInCanvas) {
-            // 将鼠标位置减去拖拽起始偏移，得到拼图块锚点（形状左上角）在Canvas内的坐标
             const anchorX = x - dragState.dragOffset.x;
             const anchorY = y - dragState.dragOffset.y;
 
-            const col = Math.floor((anchorX - CANVAS_MARGIN) / (CELL_SIZE + GAP));
-            const row = Math.floor((anchorY - CANVAS_MARGIN) / (CELL_SIZE + GAP));
+            // 计算当前拖拽形状的行列尺寸
+            let shapeCols, shapeRows;
+            let rotatedShape: boolean[][] | null = null;
+            if (dragState.draggedPiece) {
+              rotatedShape = getPieceShapeWithTransform(
+                dragState.draggedPiece.shapeId,
+                dragState.draggedPiece.rotation,
+                dragState.draggedPiece.isFlippedHorizontally || false,
+                dragState.draggedPiece.isFlippedVertically || false
+              );
+              if (rotatedShape) {
+                shapeRows = rotatedShape.length;
+                shapeCols = rotatedShape[0]?.length || 1;
+              }
+            }
+            const tile = CELL_SIZE + GAP;
 
-            // 允许锚点在网格外，由 validatePlacement 按面积比例判断；
-            // 这里直接传递 row/col（可为负或超界），以支持部分越界放置
-            updateDrag({ row, col });
-            document.body.style.cursor = 'grabbing';
+            // 浮动（未吸附）左上角的网格坐标（可为小数）
+            const gX = (anchorX - CANVAS_MARGIN) / tile;
+            const gY = (anchorY - CANVAS_MARGIN) / tile;
+            const baseCol = Math.floor(gX);
+            const baseRow = Math.floor(gY);
+
+            // 在 8 个方向（含原位，共9个）内寻找与当前浮动位置重合面积最大的候选
+            const candidates: Array<{ col: number; row: number; score: number }> = [];
+            const scoreFor = (col: number, row: number): number => {
+              const dx = Math.abs(gX - col);
+              const dy = Math.abs(gY - row);
+              const ox = Math.max(0, 1 - dx); // 与浮动位置在x方向的覆盖程度 [0,1]
+              const oy = Math.max(0, 1 - dy); // 与浮动位置在y方向的覆盖程度 [0,1]
+              return ox * oy; // 估算重合面积比例（与形状具体分布无关，但稳定）
+            };
+            for (let dr = -1; dr <= 1; dr++) {
+              for (let dc = -1; dc <= 1; dc++) {
+                const cCol = baseCol + dc;
+                const cRow = baseRow + dr;
+                candidates.push({ col: cCol, row: cRow, score: scoreFor(cCol, cRow) });
+              }
+            }
+            candidates.sort((a, b) => b.score - a.score);
+            const best = candidates[0];
+            const topLeftCol = best.col;
+            const topLeftRow = best.row;
+
+            // 若完全越界则不显示预览
+            let anyIn = false;
+            if (rotatedShape) {
+              for (let r = 0; r < rotatedShape.length && !anyIn; r++) {
+                for (let c = 0; c < rotatedShape[r].length && !anyIn; c++) {
+                  if (!rotatedShape[r][c]) continue;
+                  const rr = topLeftRow + r;
+                  const cc = topLeftCol + c;
+                  if (rr >= 0 && rr < GRID_CONFIG.HEIGHT && cc >= 0 && cc < GRID_CONFIG.WIDTH) {
+                    anyIn = true;
+                  }
+                }
+              }
+            }
+
+            if (anyIn) {
+              updateDrag({ row: topLeftRow, col: topLeftCol });
+              document.body.style.cursor = 'grabbing';
+            } else {
+              updateDrag(null);
+              document.body.style.cursor = 'not-allowed';
+            }
           } else {
             updateDrag(null);
             document.body.style.cursor = 'not-allowed';
@@ -618,17 +693,73 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
             const isInCanvas = x >= 0 && y >= 0 && x <= rect.width && y <= rect.height;
 
             if (isInCanvas) {
-              // 将鼠标位置减去拖拽起始偏移，得到拼图块锚点（形状左上角）在Canvas内的坐标
+              // 最大重合面积吸附：与 mousemove 保持一致
               const anchorX = x - dragState.dragOffset.x;
               const anchorY = y - dragState.dragOffset.y;
 
-              const col = Math.floor((anchorX - CANVAS_MARGIN) / (CELL_SIZE + GAP));
-              const row = Math.floor((anchorY - CANVAS_MARGIN) / (CELL_SIZE + GAP));
+              let shapeCols, shapeRows;
+              let rotatedShape: boolean[][] | null = null;
+              if (dragState.draggedPiece) {
+                rotatedShape = getPieceShapeWithTransform(
+                  dragState.draggedPiece.shapeId,
+                  dragState.draggedPiece.rotation,
+                  dragState.draggedPiece.isFlippedHorizontally || false,
+                  dragState.draggedPiece.isFlippedVertically || false
+                );
+                if (rotatedShape) {
+                  shapeRows = rotatedShape.length;
+                  shapeCols = rotatedShape[0]?.length || 1;
+                }
+              }
 
-              // 允许部分越界，由 validatePlacement 按面积比例判断
-              endDrag({ row, col });
+              const tile = CELL_SIZE + GAP;
+              const gX = (anchorX - CANVAS_MARGIN) / tile;
+              const gY = (anchorY - CANVAS_MARGIN) / tile;
+              const baseCol = Math.floor(gX);
+              const baseRow = Math.floor(gY);
+
+              const candidates: Array<{ col: number; row: number; score: number }> = [];
+              const scoreFor = (col: number, row: number): number => {
+                const dx = Math.abs(gX - col);
+                const dy = Math.abs(gY - row);
+                const ox = Math.max(0, 1 - dx);
+                const oy = Math.max(0, 1 - dy);
+                return ox * oy;
+              };
+              for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                  const cCol = baseCol + dc;
+                  const cRow = baseRow + dr;
+                  candidates.push({ col: cCol, row: cRow, score: scoreFor(cCol, cRow) });
+                }
+              }
+              candidates.sort((a, b) => b.score - a.score);
+              const best = candidates[0];
+              const topLeftCol = best.col;
+              const topLeftRow = best.row;
+
+              // 若完全越界则不落点
+              let anyIn = false;
+              if (rotatedShape) {
+                for (let r = 0; r < rotatedShape.length && !anyIn; r++) {
+                  for (let c = 0; c < rotatedShape[r].length && !anyIn; c++) {
+                    if (!rotatedShape[r][c]) continue;
+                    const rr = topLeftRow + r;
+                    const cc = topLeftCol + c;
+                    if (rr >= 0 && rr < GRID_CONFIG.HEIGHT && cc >= 0 && cc < GRID_CONFIG.WIDTH) {
+                      anyIn = true;
+                    }
+                  }
+                }
+              }
+
+              if (anyIn) {
+                endDrag({ row: topLeftRow, col: topLeftCol });
+              } else {
+                endDrag();
+              }
             } else {
-              endDrag(); // 不在Canvas区域内，取消放置
+              endDrag();
             }
           } else {
             endDrag(); // 无法访问Canvas，取消放置

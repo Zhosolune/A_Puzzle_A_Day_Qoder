@@ -49,91 +49,80 @@ function createPuzzlePiece(
   };
 }
 
-// 预设拼图块数据 - 经过精确计算，总共47格，适合游戏规则
+// 预设拼图块数据（根据需求替换为10个新形状）
 export const PUZZLE_PIECES: PuzzlePieceShape[] = [
-  // L形拼图块 (4+3+3=10格)
-  createPuzzlePiece('L1', 'L形-中', [
-    [true, false],
-    [true, false],
-    [true, true]
-  ], '#FF6B6B'), // 4格
-
-  createPuzzlePiece('L2', 'L形-小1', [
-    [true, false],
-    [true, true]
-  ], '#4ECDC4'), // 3格
-
-  createPuzzlePiece('L3', 'L形-小2', [
-    [true, true],
-    [true, false]
-  ], '#45B7D1'), // 3格
-
-  // I形拼图块 (5+4+3+2=14格)
-  createPuzzlePiece('I1', 'I形-长', [
-    [true, true, true, true, true]
-  ], '#96CEB4'), // 5格
-
-  createPuzzlePiece('I2', 'I形-中', [
-    [true, true, true, true]
-  ], '#FFEAA7'), // 4格
-
-  createPuzzlePiece('I3', 'I形-短', [
+  // 形状1：[[1,0,1],[1,1,1]]
+  createPuzzlePiece('N1', '形状-1', [
+    [true, false, true],
     [true, true, true]
-  ], '#DDA0DD'), // 3格
+  ], '#EF4444'),
 
-  createPuzzlePiece('I4', 'I形-二', [
-    [true, true]
-  ], '#98D8C8'), // 2格
-
-  // T形拼图块 (5+4=9格)
-  createPuzzlePiece('T1', 'T形-大', [
-    [false, true, false],
+  // 形状2：[[1,1,1],[0,1,0],[0,1,0]]
+  createPuzzlePiece('N2', '形状-2', [
     [true, true, true],
-    [false, true, false]
-  ], '#F7DC6F'), // 5格
-
-  createPuzzlePiece('T2', 'T形-小', [
     [false, true, false],
-    [true, true, true]
-  ], '#AED6F1'), // 4格
+    [false, true, false]
+  ], '#F59E0B'),
 
-  // Z形拼图块 (4+3=7格)
-  createPuzzlePiece('Z1', 'Z形-标准', [
+  // 形状3：[[1],[1],[1],[1]]
+  createPuzzlePiece('N3', '形状-3', [
+    [true],
+    [true],
+    [true],
+    [true]
+  ], '#10B981'),
+
+  // 形状4：[[1,1,0],[0,1,0],[0,1,1]]
+  createPuzzlePiece('N4', '形状-4', [
+    [true, true, false],
+    [false, true, false],
+    [false, true, true]
+  ], '#3B82F6'),
+
+  // 形状5：[[1,0,0],[1,0,0],[1,1,1]]
+  createPuzzlePiece('N5', '形状-5', [
+    [true, false, false],
+    [true, false, false],
+    [true, true, true]
+  ], '#8B5CF6'),
+
+  // 形状6：[[1,1,0],[0,1,1]]
+  createPuzzlePiece('N6', '形状-6', [
     [true, true, false],
     [false, true, true]
-  ], '#F1948A'), // 4格
+  ], '#F472B6'),
 
-  createPuzzlePiece('Z2', 'Z形-小', [
+  // 形状7：[[1,0],[1,0],[1,1]]
+  createPuzzlePiece('N7', '形状-7', [
+    [true, false],
+    [true, false],
+    [true, true]
+  ], '#22D3EE'),
+
+  // 形状8：[[0,0,0,1],[1,1,1,1]]
+  createPuzzlePiece('N8', '形状-8', [
+    [false, false, false, true],
+    [true, true, true, true]
+  ], '#A3E635'),
+
+  // 形状9：[[1,0],[1,1],[0,1],[0,1]]
+  createPuzzlePiece('N9', '形状-9', [
+    [true, false],
     [true, true],
+    [false, true],
     [false, true]
-  ], '#85C1E9'), // 3格
+  ], '#FB923C'),
 
-  // P形拼图块 (4格)
-  createPuzzlePiece('P1', 'P形-标准', [
-    [true, true],
-    [true, true]
-  ], '#F8C471'), // 4格
-
-  // 单格拼图块 (1格)
-  createPuzzlePiece('O1', '单格', [
-    [true]
-  ], '#D7DBDD'), // 1格
-
-  // 小方块 (2格) - 达到47格总和
-  createPuzzlePiece('S1', '小方块', [
-    [true, true]
-  ], '#C39BD3') // 2格 (10+14+9+7+4+1+2=47格)
+  // 形状10：[[1,1,1],[1,1,0]]
+  createPuzzlePiece('N10', '形状-10', [
+    [true, true, true],
+    [true, true, false]
+  ], '#14B8A6')
 ];
 
-// 按类型分组的拼图块
+// 按新前缀分组（N系列）
 export const PIECES_BY_TYPE = {
-  L: PUZZLE_PIECES.filter(piece => piece.id.startsWith('L')),
-  I: PUZZLE_PIECES.filter(piece => piece.id.startsWith('I')),
-  T: PUZZLE_PIECES.filter(piece => piece.id.startsWith('T')),
-  Z: PUZZLE_PIECES.filter(piece => piece.id.startsWith('Z')),
-  O: PUZZLE_PIECES.filter(piece => piece.id.startsWith('O')),
-  P: PUZZLE_PIECES.filter(piece => piece.id.startsWith('P')),
-  S: PUZZLE_PIECES.filter(piece => piece.id.startsWith('S'))
+  N: PUZZLE_PIECES.filter(piece => piece.id.startsWith('N'))
 };
 
 // 获取拼图块形状
