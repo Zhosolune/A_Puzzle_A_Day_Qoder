@@ -73,18 +73,16 @@ const DAY_POSITIONS: GridPosition[] = [
   { row: 6, col: 0 }, { row: 6, col: 1 }, { row: 6, col: 2 }
 ];
 
-// 星期标签位置（周日到周六）- 第7行后4格 + 第8行后3格
+// 星期标签位置（周一到周日）- 第7行后4格 + 第8行后3格
 const WEEKDAY_POSITIONS: GridPosition[] = [
-  // 第7行后4格（前3格被日期占用）
-  { row: 6, col: 3 }, // 周日
-  { row: 6, col: 4 }, // 周一  
-  { row: 6, col: 5 }, // 周二
-  { row: 6, col: 6 }, // 周三
-  
-  // 第8行后3格（前4格不可用）
-  { row: 7, col: 4 }, // 周四
-  { row: 7, col: 5 }, // 周五
-  { row: 7, col: 6 }  // 周六
+  // 按照 getWeekday() 函数返回值 1-7 对应周一到周日的顺序
+  { row: 6, col: 4 }, // 周一 (getWeekday返回1)
+  { row: 6, col: 5 }, // 周二 (getWeekday返回2)
+  { row: 6, col: 6 }, // 周三 (getWeekday返回3)
+  { row: 7, col: 4 }, // 周四 (getWeekday返回4)
+  { row: 7, col: 5 }, // 周五 (getWeekday返回5)
+  { row: 7, col: 6 }, // 周六 (getWeekday返回6)
+  { row: 6, col: 3 }  // 周日 (getWeekday返回7)
 ];
 
 // 网格布局配置
@@ -108,8 +106,8 @@ export const MONTH_LABELS = [
 // 日期标签文本
 export const DAY_LABELS = Array.from({ length: 31 }, (_, i) => `${i + 1}`);
 
-// 星期标签文本（按照周日到周六的顺序）
-export const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+// 星期标签文本（按照周一到周日的顺序，与 WEEKDAY_POSITIONS 数组索引对应）
+export const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 // 获取月份对应的网格位置
 export function getMonthPosition(month: number): GridPosition | null {
