@@ -1,5 +1,52 @@
 # 项目变更记录 (operateLog.md)
 
+## 2025-08-28 修复视觉更新问题
+
+### 时间：2025-08-28 16:00
+### 操作类型：[修改]
+### 影响文件：src/stores/gameStore.ts
+### 变更摘要：修复已放置拼图块旋转/翻转后视觉更新延迟问题
+### 原因：
+- 原实现使用"先移除再重新放置"的方式导致状态更新时序问题
+- 用户点击旋转/翻转按钮后需要拖动拼图块才能看到变换效果
+- 影响用户体验，操作不够直观
+### 修复方案：
+- 重构rotatePiece、flipPieceHorizontally、flipPieceVertically方法
+- 改为直接更新placedPieces Map中的拼图块状态
+- 避免移除和重新放置的异步操作
+- 确保状态更新后立即触发视觉重新渲染
+### 根本原因发现：
+- 第一层问题：drawPuzzlePiece函数的useCallback依赖数组导致闭包问题
+- 第二层问题：placedPieces Map中的数据没有正确更新旋转/翻转状态
+- 核心问题：旋转/翻转方法只更新了部分状态，没有同步所有相关属性
+### 最终修复：
+1. 移除drawPuzzlePiece的useCallback包装，改为普通函数
+2. 修复旋转/翻转方法，确保placedPieces中的所有状态都正确更新
+3. 在更新placedPieces时同步rotation、isFlippedHorizontally、isFlippedVertically所有属性
+### 测试状态：[已修复]
+
+## 2025-08-28 新增Toast通知系统
+
+### 时间：2025-08-28 17:30
+### 操作类型：[新增]
+### 影响文件：
+- src/components/ui/Toast.tsx (新增Toast通知组件)
+- src/stores/gameStore.ts (新增通知状态管理)
+- src/types/store.ts (新增ToastNotification类型)
+- src/App.tsx (集成Toast容器)
+### 变更摘要：实现用户友好的操作反馈通知系统
+### 原因：
+- 旋转/翻转失败时用户无感知，体验不佳
+- 需要提供清晰的操作反馈和错误提示
+### 功能特性：
+- 支持可堆叠的Toast通知（最多3个）
+- 自动消失（3.5秒）
+- 淡入淡出动画效果
+- 多种类型（error、warning、success、info）
+- 固定在屏幕右上角
+- 手动关闭功能
+### 测试状态：[待测试]
+
 ## 2025-08-25 项目重构规划
 
 ### 时间：2025-08-25 14:30

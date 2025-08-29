@@ -4,6 +4,7 @@ import { GameBoard } from './components/game/GameBoard';
 import { PuzzlePiece } from './components/game/PuzzlePiece';
 import { GlobalDragPreview } from './components/game/GlobalDragPreview';
 import { Button } from './components/ui/Button';
+import { ToastContainer } from './components/ui/Toast';
 import { getDateDisplayText } from './utils/dateUtils';
 import './App.css';
 
@@ -183,6 +184,9 @@ function App() {
 
       {/* 全局拖拽预览 */}
       <GlobalDragPreview cellSize={80} gap={4} />
+
+      {/* Toast通知容器 */}
+      <ToastContainer />
     </div>
   );
 }

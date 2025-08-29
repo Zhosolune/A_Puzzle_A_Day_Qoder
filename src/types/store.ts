@@ -1,8 +1,8 @@
-import type { 
-  GridCell, 
-  GridPosition, 
-  PuzzlePieceState, 
-  PlacedPiece, 
+import type {
+  GridCell,
+  GridPosition,
+  PuzzlePieceState,
+  PlacedPiece,
   DateTarget,
   GameStatus,
   GameStats,
@@ -10,6 +10,14 @@ import type {
   GameMove,
   GameDifficulty
 } from './game';
+
+// Toast通知类型
+export interface ToastNotification {
+  id: string;
+  message: string;
+  type: 'error' | 'warning' | 'success' | 'info';
+  timestamp: number;
+}
 
 // 主游戏状态接口
 export interface GameState {
@@ -41,6 +49,9 @@ export interface GameState {
   showGrid: boolean;
   soundEnabled: boolean;
   animationEnabled: boolean;
+
+  // 通知状态
+  notifications: ToastNotification[];
 }
 
 // 游戏状态操作接口
@@ -88,6 +99,11 @@ export interface GameActions {
   toggleHints: () => void;
   toggleGrid: () => void;
   setDifficulty: (difficulty: GameDifficulty) => void;
+
+  // 通知管理
+  addNotification: (message: string, type?: 'error' | 'warning' | 'success' | 'info') => void;
+  removeNotification: (id: string) => void;
+  clearNotifications: () => void;
 }
 
 // 组合的游戏Store类型

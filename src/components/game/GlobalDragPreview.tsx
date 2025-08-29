@@ -43,7 +43,7 @@ export const GlobalDragPreview: React.FC<GlobalDragPreviewProps> = ({
     const startY = dragState.globalMousePosition.y - dragState.dragOffset.y;
 
     // 设置透明度
-    ctx.globalAlpha = 0.8;
+    ctx.globalAlpha = 0.7;
 
     // 绘制拼图块
     for (let r = 0; r < rotatedShape.length; r++) {
@@ -52,18 +52,19 @@ export const GlobalDragPreview: React.FC<GlobalDragPreviewProps> = ({
           const x = startX + c * (cellSize + gap);
           const y = startY + r * (cellSize + gap);
 
-          // 根据拖拽区域和状态显示不同颜色
+          // 始终使用拼图块本身的颜色
+          ctx.fillStyle = pieceShape.color;
+
+          // 根据拖拽区域和状态显示不同边框颜色
           if (dragState.globalMousePosition) {
             const dropZone = checkDropZone(dragState.globalMousePosition);
 
             if (dropZone === 'gameboard') {
               // 在GameBoard区域
               if (dragState.isValidPosition) {
-                ctx.fillStyle = '#10b981'; // 绿色 - 有效位置
-                ctx.strokeStyle = '#059669';
+                ctx.strokeStyle = '#10b981'; // 绿色边框 - 有效位置
               } else {
-                ctx.fillStyle = '#f87171'; // 红色 - 无效位置
-                ctx.strokeStyle = '#dc2626';
+                ctx.strokeStyle = '#dc2626'; // 红色边框 - 无效位置
               }
             } else if (dropZone === 'left-storage' || dropZone === 'right-storage') {
               // 在存放区域
@@ -74,21 +75,17 @@ export const GlobalDragPreview: React.FC<GlobalDragPreviewProps> = ({
               );
 
               if (isCorrectStorage) {
-                ctx.fillStyle = '#3b82f6'; // 蓝色 - 可以放置到存放区域
-                ctx.strokeStyle = '#1d4ed8';
+                ctx.strokeStyle = '#3b82f6'; // 蓝色边框 - 可以放置到存放区域
               } else {
-                ctx.fillStyle = '#f87171'; // 红色 - 错误的存放区域
-                ctx.strokeStyle = '#dc2626';
+                ctx.strokeStyle = '#dc2626'; // 红色边框 - 错误的存放区域
               }
             } else {
               // 不在任何有效区域
-              ctx.fillStyle = '#6b7280'; // 灰色 - 无效区域
-              ctx.strokeStyle = '#374151';
+              ctx.strokeStyle = '#6b7280'; // 灰色边框 - 无效区域
             }
           } else {
-            // 没有全局位置信息，使用原始颜色
-            ctx.fillStyle = pieceShape.color;
-            ctx.strokeStyle = '#333';
+            // 没有全局位置信息，使用默认边框
+            ctx.strokeStyle = '#333333';
           }
 
           ctx.fillRect(x, y, cellSize, cellSize);

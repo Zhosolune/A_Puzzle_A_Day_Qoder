@@ -13,6 +13,17 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredCell, setHoveredCell] = useState<GridPosition | null>(null);
   const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 新增：记录单击选择的已放置拼图块与工具栏位置（相对于视口，position: fixed）
+  const [selectedPlacedPieceId, setSelectedPlacedPieceId] = useState<string | null>(null);
+  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
+  // 新增：延迟启动拖拽的判定（避免单击即进入拖拽）
+  const pendingDragRef = useRef<{
+    pieceId: string;
+    startClientX: number;
+    startClientY: number;
+    offset: { x: number; y: number };
+  } | null>(null);
 
   const {
     gridCells,
@@ -29,7 +40,12 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
     startDrag,
     removePiece,
     checkDropZone,
-    setGameBoardRef
+    setGameBoardRef,
+    // 新增：调用旋转/翻转动作
+    rotatePiece,
+    flipPieceHorizontally,
+    flipPieceVertically,
+    addNotification
   } = useGameStore();
 
   // 设置GameBoard引用
@@ -229,46 +245,46 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
     // 如果需要强制显示“无效”提示，可在 drawPreview 中根据 dragState.isInValidDropZone 决定颜色
   }, []);
 
-  // 处理鼠标按下 - 支持已放置拼图块的重新拖拽
+  // 处理鼠标按下 - 支持已放置拼图块的重新拖拽 或 单击选中显示工具栏
   const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const position = getGridPositionFromMouseEvent(event);
-    if (!position) return;
+    if (!position) {
+      // 点击到无效区域，清除选择
+      setSelectedPlacedPieceId(null);
+      setToolbarPos(null);
+      return;
+    }
 
     // 检查是否点击了已放置的拼图块（取顶层）
     const clickedPieceId = getTopPlacedPieceAt(position) || getPlacedPieceAtPosition(position);
     if (clickedPieceId) {
-      // 找到对应的拼图块数据
+      // 记录为待拖拽，只有超过阈值才真正开始拖拽；否则在 mouseup 作为“单击”处理
       const placedPiece = placedPieces.get(clickedPieceId);
-      const availablePiece = availablePieces.find(p => p.id === clickedPieceId);
-
-      if (placedPiece && availablePiece) {
-        // 从面板移除拼图块
-        removePiece(clickedPieceId);
-
-        // 计算拖拽偏移量
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const rect = canvas.getBoundingClientRect();
-          const pieceStartX = placedPiece.position.col * (CELL_SIZE + GAP) + CANVAS_MARGIN;
-          const pieceStartY = placedPiece.position.row * (CELL_SIZE + GAP) + CANVAS_MARGIN;
-
-          const offset = {
-            x: event.clientX - rect.left - pieceStartX,
-            y: event.clientY - rect.top - pieceStartY
-          };
-
-          // 设置拖拽光标
-          document.body.style.cursor = 'grabbing';
-
-          // 开始拖拽（从面板拖拽，没有存放区域信息）
-          startDrag(clickedPieceId, offset);
-        }
+      const canvas = canvasRef.current;
+      if (placedPiece && canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const pieceStartX = placedPiece.position.col * (CELL_SIZE + GAP) + CANVAS_MARGIN;
+        const pieceStartY = placedPiece.position.row * (CELL_SIZE + GAP) + CANVAS_MARGIN;
+        const offset = {
+          x: event.clientX - rect.left - pieceStartX,
+          y: event.clientY - rect.top - pieceStartY
+        };
+        pendingDragRef.current = {
+          pieceId: clickedPieceId,
+          startClientX: event.clientX,
+          startClientY: event.clientY,
+          offset
+        };
       }
+    } else {
+      // 点击空白格，清除选择
+      setSelectedPlacedPieceId(null);
+      setToolbarPos(null);
     }
-  }, [getGridPositionFromMouseEvent, getPlacedPieceAtPosition, placedPieces, availablePieces, removePiece, startDrag]);
+  }, [getGridPositionFromMouseEvent, getPlacedPieceAtPosition, getTopPlacedPieceAt, placedPieces]);
 
   // 绘制单个拼图块
-  const drawPuzzlePiece = useCallback((ctx: CanvasRenderingContext2D, placedPiece: any) => {
+  const drawPuzzlePiece = (ctx: CanvasRenderingContext2D, placedPiece: any, overlappingCells: Set<string> = new Set()) => {
     const pieceShape = getPuzzlePieceShape(placedPiece.pieceId);
     const rotatedShape = getPieceShapeWithTransform(
       placedPiece.pieceId,
@@ -279,29 +295,127 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
 
     if (!pieceShape || !rotatedShape) return;
 
+    // 收集所有占用的单元格位置
+    const occupiedCells: {row: number; col: number}[] = [];
     for (let r = 0; r < rotatedShape.length; r++) {
       for (let c = 0; c < rotatedShape[r].length; c++) {
         if (rotatedShape[r][c]) {
           const cellRow = placedPiece.position.row + r;
           const cellCol = placedPiece.position.col + c;
-
-          // 允许越界渲染：不再限制网格范围，直接绘制在扩展后的Canvas上
-          const cellPos = getCellCanvasPosition(cellRow, cellCol);
-          const x = cellPos.x;
-          const y = cellPos.y;
-
-          // 绘制拼图块格子
-          ctx.fillStyle = pieceShape.color;
-          ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-
-          // 绘制拼图块边框
-          ctx.strokeStyle = '#333';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+          occupiedCells.push({row: cellRow, col: cellCol});
         }
       }
     }
-  }, []);
+
+    // 绘制拼图块填充
+    occupiedCells.forEach(cell => {
+      const cellPos = getCellCanvasPosition(cell.row, cell.col);
+      const x = cellPos.x;
+      const y = cellPos.y;
+
+      // 检查当前单元格是否重叠
+      const cellKey = `${cell.row},${cell.col}`;
+      const isThisCellOverlapping = overlappingCells.has(cellKey);
+      
+      // 如果当前单元格重叠，使用红色；否则使用原色
+      ctx.fillStyle = isThisCellOverlapping ? '#dc2626' : pieceShape.color;
+      ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+    });
+
+    // 为重叠的方块绘制红色提示边框
+    const overlappingCellsArray = occupiedCells.filter(cell => overlappingCells.has(`${cell.row},${cell.col}`));
+    if (overlappingCellsArray.length > 0) {
+      drawOverlapWarningBorder(ctx, overlappingCellsArray);
+    }
+
+    // 绘制连续外边框（只有外轮廓，颜色调浅）
+    // 所有放置的拼图块都显示边缘
+    drawContinuousOutlineForPiece(ctx, occupiedCells);
+  };
+
+  // 为正常拼图块绘制浅色连续外边框
+  const drawContinuousOutlineForPiece = (ctx: CanvasRenderingContext2D, cells: {row: number; col: number}[]) => {
+    // 基于单元格集计算外轮廓：找出每个单元格四条边中"暴露"的边，组合成多段路径
+    const edges = new Map<string, { x1: number; y1: number; x2: number; y2: number }>();
+    const keyOf = (x1: number, y1: number, x2: number, y2: number) => `${x1},${y1}-${x2},${y2}`;
+    const sameEdgeKey = (x1: number, y1: number, x2: number, y2: number) => `${x2},${y2}-${x1},${y1}`;
+
+    cells.forEach(cell => {
+      const { x, y } = getCellCanvasPosition(cell.row, cell.col);
+      const l = x, r = x + CELL_SIZE, t = y, b = y + CELL_SIZE;
+      const cellEdges = [
+        { x1: l, y1: t, x2: r, y2: t }, // top
+        { x1: r, y1: t, x2: r, y2: b }, // right
+        { x1: r, y1: b, x2: l, y2: b }, // bottom
+        { x1: l, y1: b, x2: l, y2: t }  // left
+      ];
+      cellEdges.forEach(e => {
+        const k = keyOf(e.x1, e.y1, e.x2, e.y2);
+        const rk = sameEdgeKey(e.x1, e.y1, e.x2, e.y2);
+        if (edges.has(rk)) {
+          // 与相邻单元共享的边：删除，避免内部边被描边
+          edges.delete(rk);
+        } else {
+          edges.set(k, e);
+        }
+      });
+    });
+
+    // 将边绘制为连续路径
+    ctx.save();
+    ctx.strokeStyle = '#94a3b8'; // 浅灰色
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    edges.forEach(e => {
+      ctx.moveTo(e.x1, e.y1);
+      ctx.lineTo(e.x2, e.y2);
+    });
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  // 为重叠方块绘制红色提示边框
+  const drawOverlapWarningBorder = (ctx: CanvasRenderingContext2D, overlappingCells: {row: number; col: number}[]) => {
+    // 基于重叠单元格集计算外轮廓边框
+    const edges = new Map<string, { x1: number; y1: number; x2: number; y2: number }>();
+    const keyOf = (x1: number, y1: number, x2: number, y2: number) => `${x1},${y1}-${x2},${y2}`;
+    const sameEdgeKey = (x1: number, y1: number, x2: number, y2: number) => `${x2},${y2}-${x1},${y1}`;
+
+    overlappingCells.forEach(cell => {
+      const { x, y } = getCellCanvasPosition(cell.row, cell.col);
+      // 扩展边框，距离方块2px
+      const offset = 2;
+      const l = x - offset, r = x + CELL_SIZE + offset, t = y - offset, b = y + CELL_SIZE + offset;
+      const cellEdges = [
+        { x1: l, y1: t, x2: r, y2: t }, // top
+        { x1: r, y1: t, x2: r, y2: b }, // right
+        { x1: r, y1: b, x2: l, y2: b }, // bottom
+        { x1: l, y1: b, x2: l, y2: t }  // left
+      ];
+      cellEdges.forEach(e => {
+        const k = keyOf(e.x1, e.y1, e.x2, e.y2);
+        const rk = sameEdgeKey(e.x1, e.y1, e.x2, e.y2);
+        if (edges.has(rk)) {
+          // 与相邻单元共享的边：删除，避免内部边被描边
+          edges.delete(rk);
+        } else {
+          edges.set(k, e);
+        }
+      });
+    });
+
+    // 绘制主边框
+    ctx.save();
+    ctx.strokeStyle = '#dc2626'; // 红色边框
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    edges.forEach(e => {
+      ctx.moveTo(e.x1, e.y1);
+      ctx.lineTo(e.x2, e.y2);
+    });
+    ctx.stroke();
+    ctx.restore();
+  };
 
   // 绘制预览（支持悬停预览和拖拽预览）
   const drawPreview = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -351,8 +465,12 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
     })();
     if (allOut) return;
 
+    // 获取拼图块的原始颜色
+    const pieceShape = getPuzzlePieceShape(previewPiece.shapeId);
+    const originalColor = pieceShape?.color || '#6b7280'; // 默认灰色
+
     // 绘制预览，拖拽时透明度更高
-    ctx.globalAlpha = dragState.isDragging ? 0.7 : 0.5;
+    ctx.globalAlpha = dragState.isDragging ? 0.6 : 0.4;
 
     for (let r = 0; r < rotatedShape.length; r++) {
       for (let c = 0; c < rotatedShape[r].length; c++) {
@@ -365,13 +483,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
           const x = cellPos.x;
           const y = cellPos.y;
 
-          // 根据是否有效显示不同颜色，拖拽时颜色更鲜艳
-          if (dragState.isDragging) {
-            ctx.fillStyle = isValid ? '#10b981' : '#f87171'; // 更鲜艳的绿色和红色
-            ctx.strokeStyle = isValid ? '#059669' : '#dc2626';
+          // 使用拼图块本身的颜色，根据有效性调整透明度和边框
+          ctx.fillStyle = originalColor;
+          
+          if (isValid) {
+            // 有效位置：使用原色，边框为深色
+            ctx.strokeStyle = '#333333';
           } else {
-            ctx.fillStyle = isValid ? '#22d3ee' : '#ef4444';
-            ctx.strokeStyle = isValid ? '#0891b2' : '#dc2626';
+            // 无效位置：保持原色但边框为红色提示
+            ctx.strokeStyle = '#dc2626';
           }
 
           ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
@@ -383,6 +503,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
 
     ctx.globalAlpha = 1.0;
   }, [selectedPieceId, hoveredCell, availablePieces, validatePlacement, dragState]);
+
+
 
   // 绘制网格
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -459,6 +581,27 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
       }
     }
 
+    // 检测重叠的单元格
+    const overlappingCells = new Set<string>();
+    const allOccupiedCells = new Map<string, string[]>(); // cellKey -> pieceIds
+    
+    Array.from(placedPieces.values()).forEach((p: any) => {
+      p.occupiedCells.forEach((cell: any) => {
+        const cellKey = `${cell.row},${cell.col}`;
+        if (!allOccupiedCells.has(cellKey)) {
+          allOccupiedCells.set(cellKey, []);
+        }
+        allOccupiedCells.get(cellKey)!.push(p.pieceId);
+      });
+    });
+    
+    // 找出被多个拼图块占用的单元格
+    allOccupiedCells.forEach((pieceIds, cellKey) => {
+      if (pieceIds.length > 1) {
+        overlappingCells.add(cellKey);
+      }
+    });
+
     // 绘制已放置的拼图块（排除正在拖拽的拼图块）
     // 按 zIndex 从小到大绘制，后放置的自然在上层
     Array.from(placedPieces.values())
@@ -467,16 +610,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
         if (dragState.isDragging && dragState.draggedPiece?.id === placedPiece.pieceId) {
           return;
         }
-        drawPuzzlePiece(ctx, placedPiece);
+        drawPuzzlePiece(ctx, placedPiece, overlappingCells);
       });
-
-    // 绘制重叠高亮：为发生碰撞的拼图块画红色外框（连续轮廓），并标注重叠格子
-    const overlappingPieces = Array.from(placedPieces.values()).filter((p: any) => {
-      return Array.from(placedPieces.values()).some((q: any) => {
-        if (q.pieceId === p.pieceId) return false;
-        return p.occupiedCells.some((cell: any) => q.occupiedCells.some((c: any) => c.row === cell.row && c.col === cell.col));
-      });
-    });
 
     const drawContinuousOutline = (ctx: CanvasRenderingContext2D, cells: {row: number; col: number}[]) => {
       // 基于单元格集计算外轮廓：找出每个单元格四条边中“暴露”的边，组合成多段路径
@@ -518,33 +653,39 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
       ctx.restore();
     };
 
-    overlappingPieces.forEach((p: any) => {
-      const overlaps = Array.from(placedPieces.values())
-        .filter((q: any) => q.pieceId !== p.pieceId)
-        .flatMap((q: any) => p.occupiedCells.filter((cell: any) => q.occupiedCells.some((c: any) => c.row === cell.row && c.col === cell.col)));
-
-      // 连续外轮廓
-      drawContinuousOutline(ctx, p.occupiedCells);
-
-      // 重叠区域半透明覆盖
-      ctx.save();
-      ctx.fillStyle = 'rgba(220, 38, 38, 0.35)';
-      overlaps.forEach((cell: any) => {
-        const cellPos = getCellCanvasPosition(cell.row, cell.col);
-        ctx.fillRect(cellPos.x, cellPos.y, CELL_SIZE, CELL_SIZE);
-      });
-      ctx.restore();
-    });
+    // 重叠检测和绘制已经在上面的drawPuzzlePiece调用中处理
 
     // 绘制预览
     drawPreview(ctx);
     // 绘制沿着网格轮廓的边框
     drawGridOutline(ctx);
-  }, [gridCells, dateTarget, showGrid, placedPieces, drawPuzzlePiece, drawPreview, canvasWidth, canvasHeight, shouldRenderCell, drawGridOutline]);
+  }, [gridCells, dateTarget, showGrid, placedPieces, availablePieces, drawPreview, canvasWidth, canvasHeight, shouldRenderCell, drawGridOutline]);
 
   // 全局拖拽事件监听
   useEffect(() => {
+    const DRAG_THRESHOLD = 5; // 像素阈值：超过则认为开始拖拽
+
     const handleMouseMove = (e: MouseEvent) => {
+      // 若未进入正式拖拽，但存在待拖拽对象，判断是否越过阈值，越过则启动拖拽
+      if (!dragState.isDragging && pendingDragRef.current) {
+        const dx = e.clientX - pendingDragRef.current.startClientX;
+        const dy = e.clientY - pendingDragRef.current.startClientY;
+        if (Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+          const { pieceId, offset } = pendingDragRef.current;
+          pendingDragRef.current = null;
+
+          // 真正启动拖拽：先从面板移除，再开始拖拽
+          removePiece(pieceId);
+          document.body.style.cursor = 'grabbing';
+          startDrag(pieceId, offset);
+
+          // 开始拖拽时隐藏工具栏
+          setSelectedPlacedPieceId(null);
+          setToolbarPos(null);
+          return; // 后续逻辑由 drag 分支处理
+        }
+      }
+
       if (dragState.isDragging) {
         const globalPosition = { x: e.clientX, y: e.clientY };
         const dropZone = checkDropZone(globalPosition);
@@ -581,7 +722,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
             const anchorY = y - dragState.dragOffset.y;
 
             // 计算当前拖拽形状的行列尺寸
-            let shapeCols, shapeRows;
             let rotatedShape: boolean[][] | null = null;
             if (dragState.draggedPiece) {
               rotatedShape = getPieceShapeWithTransform(
@@ -590,10 +730,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
                 dragState.draggedPiece.isFlippedHorizontally || false,
                 dragState.draggedPiece.isFlippedVertically || false
               );
-              if (rotatedShape) {
-                shapeRows = rotatedShape.length;
-                shapeCols = rotatedShape[0]?.length || 1;
-              }
             }
             const tile = CELL_SIZE + GAP;
 
@@ -659,6 +795,45 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
     };
 
     const handleMouseUp = (e: MouseEvent) => {
+      // 若未进入正式拖拽且存在待拖拽对象 => 视为“单击选择”
+      if (!dragState.isDragging && pendingDragRef.current) {
+        const { pieceId } = pendingDragRef.current;
+        pendingDragRef.current = null;
+
+        // 设置选中并计算工具栏位置（固定定位：视口坐标）
+        setSelectedPlacedPieceId(pieceId);
+
+        const placedPiece = placedPieces.get(pieceId);
+        const canvas = canvasRef.current;
+        if (placedPiece && canvas) {
+          const rect = canvas.getBoundingClientRect();
+          const rotatedShape = getPieceShapeWithTransform(
+            placedPiece.pieceId,
+            placedPiece.rotation,
+            placedPiece.isFlippedHorizontally || false,
+            placedPiece.isFlippedVertically || false
+          );
+          if (rotatedShape) {
+            const cols = rotatedShape[0]?.length || 1;
+            const rows = rotatedShape.length;
+            const tile = CELL_SIZE + GAP;
+            const startX = placedPiece.position.col * tile + CANVAS_MARGIN;
+            const startY = placedPiece.position.row * tile + CANVAS_MARGIN;
+            const widthPx = cols * CELL_SIZE + (cols - 1) * GAP; // = cols*tile - GAP
+            const heightPx = rows * CELL_SIZE + (rows - 1) * GAP;
+
+            // 工具栏中心对齐到拼图块底部中心，距底部8px
+            const centerXInCanvas = startX + widthPx / 2;
+            const bottomYInCanvas = startY + heightPx;
+            setToolbarPos({
+              x: rect.left + centerXInCanvas,
+              y: rect.top + bottomYInCanvas + 8
+            });
+          }
+        }
+        return;
+      }
+
       if (dragState.isDragging) {
         // 恢复默认光标
         document.body.style.cursor = 'default';
@@ -675,10 +850,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
           );
 
           if (isCorrectStorage) {
-            // 放置到正确的存放区域，调用endDrag但不传位置（表示放回存放区域）
             endDrag();
           } else {
-            // 放置到错误的存放区域，取消放置
             endDrag();
           }
         } else {
@@ -697,7 +870,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
               const anchorX = x - dragState.dragOffset.x;
               const anchorY = y - dragState.dragOffset.y;
 
-              let shapeCols, shapeRows;
               let rotatedShape: boolean[][] | null = null;
               if (dragState.draggedPiece) {
                 rotatedShape = getPieceShapeWithTransform(
@@ -706,10 +878,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
                   dragState.draggedPiece.isFlippedHorizontally || false,
                   dragState.draggedPiece.isFlippedVertically || false
                 );
-                if (rotatedShape) {
-                  shapeRows = rotatedShape.length;
-                  shapeCols = rotatedShape[0]?.length || 1;
-                }
               }
 
               const tile = CELL_SIZE + GAP;
@@ -774,8 +942,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      // 清理待拖拽状态
+      pendingDragRef.current = null;
     };
-  }, [dragState.isDragging, updateDrag, updateGlobalDrag, endDrag]);
+  }, [dragState.isDragging, updateDrag, updateGlobalDrag, endDrag, checkDropZone, removePiece, startDrag]);
 
   // 简化的window resize事件监听（仅在需要时重绘Canvas）
   useEffect(() => {
@@ -837,6 +1007,47 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
     drawGrid(ctx);
   }, [drawGrid]);
 
+  // 新增：当放置/可用数据变化时强制重绘，确保旋转/翻转后立即更新画面
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    drawGrid(ctx);
+  }, [placedPieces, availablePieces, gridCells]); // 移除drawGrid依赖，避免无限循环
+
+  // 新增：当已放置拼图块发生旋转/翻转时，更新工具栏位置以贴合新形状
+  useEffect(() => {
+    if (!selectedPlacedPieceId) return;
+    const placedPiece = placedPieces.get(selectedPlacedPieceId);
+    const canvas = canvasRef.current;
+    if (!placedPiece || !canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const rotatedShape = getPieceShapeWithTransform(
+      placedPiece.pieceId,
+      placedPiece.rotation,
+      placedPiece.isFlippedHorizontally || false,
+      placedPiece.isFlippedVertically || false
+    );
+    if (!rotatedShape) return;
+
+    const cols = rotatedShape[0]?.length || 1;
+    const rows = rotatedShape.length;
+    const tile = CELL_SIZE + GAP;
+    const startX = placedPiece.position.col * tile + CANVAS_MARGIN;
+    const startY = placedPiece.position.row * tile + CANVAS_MARGIN;
+    const widthPx = cols * CELL_SIZE + (cols - 1) * GAP;
+    const heightPx = rows * CELL_SIZE + (rows - 1) * GAP;
+
+    const centerXInCanvas = startX + widthPx / 2;
+    const bottomYInCanvas = startY + heightPx;
+    setToolbarPos({
+      x: rect.left + centerXInCanvas,
+      y: rect.top + bottomYInCanvas + 8
+    });
+  }, [selectedPlacedPieceId, placedPieces]);
+
   return (
     <div className={`inline-block ${className || ''}`}>
       {/* 简化的容器，突出Canvas内部的边框 */}
@@ -856,6 +1067,76 @@ export const GameBoard: React.FC<GameBoardProps> = ({ className }) => {
           onMouseLeave={handleCanvasMouseLeave}
           onMouseDown={handleCanvasMouseDown}
         />
+
+        {/* 已放置拼图块的悬浮工具栏（固定定位，随视口） */}
+        {selectedPlacedPieceId && toolbarPos && (
+          <div
+            className="fixed z-50 flex gap-1 bg-white rounded-lg shadow-lg border p-1"
+            style={{ left: `${toolbarPos.x}px`, top: `${toolbarPos.y}px`, transform: 'translateX(-50%)' }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 右旋 */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                if (selectedPlacedPieceId) {
+                  rotatePiece(selectedPlacedPieceId);
+                }
+              }}
+              className="w-7 h-7 bg-blue-500 hover:bg-blue-600 text-white rounded text-xs flex items-center justify-center"
+              title="向右旋转90°"
+            >
+              ↻
+            </button>
+            {/* 左旋（右旋3次） */}
+            <button
+              onClick={() => {
+                rotatePiece(selectedPlacedPieceId);
+                rotatePiece(selectedPlacedPieceId);
+                rotatePiece(selectedPlacedPieceId);
+              }}
+              className="w-7 h-7 bg-blue-500 hover:bg-blue-600 text-white rounded text-xs flex items-center justify-center"
+              title="向左旋转90°"
+            >
+              ↺
+            </button>
+            {/* 水平翻转 */}
+            <button
+              onClick={() => flipPieceHorizontally(selectedPlacedPieceId)}
+              className="w-7 h-7 bg-green-500 hover:bg-green-600 text-white rounded text-xs flex items-center justify-center"
+              title="水平翻转"
+            >
+              ⟷
+            </button>
+            {/* 垂直翻转 */}
+            <button
+              onClick={() => flipPieceVertically(selectedPlacedPieceId)}
+              className="w-7 h-7 bg-green-500 hover:bg-green-600 text-white rounded text-xs flex items-center justify-center"
+              title="垂直翻转"
+            >
+              ↕
+            </button>
+
+            {/* 测试通知按钮 */}
+            <button
+              onClick={() => addNotification('测试通知功能', 'warning')}
+              className="w-7 h-7 bg-gray-500 hover:bg-gray-600 text-white rounded text-xs flex items-center justify-center"
+              title="测试通知"
+            >
+              🔔
+            </button>
+            {/* 关闭 */}
+            <button
+              onClick={() => { setSelectedPlacedPieceId(null); setToolbarPos(null); }}
+              className="w-7 h-7 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded text-xs flex items-center justify-center"
+              title="关闭"
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

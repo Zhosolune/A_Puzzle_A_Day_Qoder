@@ -13,7 +13,8 @@ import type {
   DragState,
   GameMove,
   GameDifficulty,
-  PlacedPiece
+  PlacedPiece,
+  ToastNotification
 } from '../types';
 import { PUZZLE_PIECES, getPieceShapeWithTransform } from '../data/puzzlePieces';
 import { GRID_LAYOUT, isReservedPosition, isValidPosition, getPositionLabel, isBlockedPosition } from '../data/gridLayout';
@@ -133,6 +134,9 @@ export const useGameStore = create<GameStore>()(
       showGrid: true,
       soundEnabled: true,
       animationEnabled: true,
+
+      // 通知状态
+      notifications: [],
 
       // 游戏控制方法
       initializeGame: (date = getCurrentDate()) => {
@@ -349,51 +353,92 @@ export const useGameStore = create<GameStore>()(
         if (!piece) return;
 
         const newRotation = ((piece.rotation + 90) % 360) as 0 | 90 | 180 | 270;
+        const wasPlaced = piece.isPlaced;
+        const placedPiece = state.placedPieces.get(pieceId);
+        const originalPosition = placedPiece?.position;
 
         // 如果拼图块已放置，需要检查旋转后是否仍然合法
-        if (piece.isPlaced && piece.position) {
-          // 临时更新旋转角度来检查
-          const tempPiece = { ...piece, rotation: newRotation };
-          const tempShape = getPieceShapeWithTransform(tempPiece.shapeId, newRotation, piece.isFlippedHorizontally, piece.isFlippedVertically);
+        if (wasPlaced && originalPosition && placedPiece) {
+          // 使用新的旋转角度来检查
+          const tempShape = getPieceShapeWithTransform(piece.shapeId, newRotation, piece.isFlippedHorizontally, piece.isFlippedVertically);
 
           if (!tempShape) return;
 
-          // 检查旋转后是否仍在网格内且不冲突
-          let isValid = true;
-          for (let r = 0; r < tempShape.length && isValid; r++) {
-            for (let c = 0; c < tempShape[r].length && isValid; c++) {
+          // 计算旋转后占用的格子
+          const newOccupiedCells: GridPosition[] = [];
+          for (let r = 0; r < tempShape.length; r++) {
+            for (let c = 0; c < tempShape[r].length; c++) {
               if (tempShape[r][c]) {
-                const newPos = {
-                  row: piece.position.row + r,
-                  col: piece.position.col + c
-                };
-
-                if (!isValidPosition(newPos) ||
-                    (isReservedPosition(newPos) &&
-                     (newPos.row === state.dateTarget.targetPositions.month.row &&
-                      newPos.col === state.dateTarget.targetPositions.month.col))) {
-                  isValid = false;
-                }
+                newOccupiedCells.push({
+                  row: originalPosition.row + r,
+                  col: originalPosition.col + c
+                });
               }
             }
           }
 
-          if (!isValid) return;
+          // 检查旋转后是否仍在网格内且不冲突
+          let isValid = true;
+          for (const pos of newOccupiedCells) {
+            if (!isValidPosition(pos) ||
+                (isReservedPosition(pos) &&
+                 (pos.row === state.dateTarget.targetPositions.month.row &&
+                  pos.col === state.dateTarget.targetPositions.month.col))) {
+              isValid = false;
+              break;
+            }
+          }
 
-          // 先移除旧位置，再放置新位置
-          get().removePiece(pieceId);
-        }
+          if (!isValid) {
+            get().addNotification('旋转后位置超出边界或与目标格子冲突', 'warning');
+            return;
+          }
 
-        // 更新拼图块旋转角度
-        const updatedPieces = state.availablePieces.map(p =>
-          p.id === pieceId ? { ...p, rotation: newRotation } : p
-        );
+          // 直接更新所有相关状态
+          const updatedPieces = state.availablePieces.map(p =>
+            p.id === pieceId ? { ...p, rotation: newRotation } : p
+          );
 
-        set({ availablePieces: updatedPieces });
+          const newPlacedPieces = new Map(state.placedPieces);
+          const existingPlacedPiece = newPlacedPieces.get(pieceId);
 
-        // 如果之前已放置，重新放置
-        if (piece.isPlaced && piece.position) {
-          get().placePiece(pieceId, piece.position);
+          if (existingPlacedPiece) {
+            // 确保所有旋转/翻转状态都正确更新
+            newPlacedPieces.set(pieceId, {
+              ...existingPlacedPiece,
+              rotation: newRotation,
+              isFlippedHorizontally: piece.isFlippedHorizontally,
+              isFlippedVertically: piece.isFlippedVertically,
+              occupiedCells: newOccupiedCells
+            });
+          }
+
+          // 重建网格
+          const newGrid = rebuildGridFromPlacedPieces(newPlacedPieces);
+
+          // 记录移动
+          const move: GameMove = {
+            id: generateMoveId(),
+            timestamp: Date.now(),
+            type: 'rotate',
+            pieceId,
+            fromPosition: originalPosition,
+            toPosition: originalPosition
+          };
+
+          set({
+            gridCells: newGrid,
+            availablePieces: updatedPieces,
+            placedPieces: newPlacedPieces,
+            moveHistory: [...state.moveHistory, move]
+          });
+        } else {
+          // 如果拼图块未放置，只更新旋转角度
+          const updatedPieces = state.availablePieces.map(p =>
+            p.id === pieceId ? { ...p, rotation: newRotation } : p
+          );
+
+          set({ availablePieces: updatedPieces });
         }
       },
 
@@ -404,9 +449,12 @@ export const useGameStore = create<GameStore>()(
         if (!piece) return;
 
         const newFlippedState = !piece.isFlippedHorizontally;
+        const wasPlaced = piece.isPlaced;
+        const placedPiece = state.placedPieces.get(pieceId);
+        const originalPosition = placedPiece?.position;
 
         // 如果拼图块已放置，需要检查翻转后是否仍然合法
-        if (piece.isPlaced && piece.position) {
+        if (wasPlaced && originalPosition && placedPiece) {
           const tempShape = getPieceShapeWithTransform(
             piece.shapeId,
             piece.rotation,
@@ -416,42 +464,80 @@ export const useGameStore = create<GameStore>()(
 
           if (!tempShape) return;
 
-          // 检查翻转后是否仍在网格内且不冲突
-          let isValid = true;
-          for (let r = 0; r < tempShape.length && isValid; r++) {
-            for (let c = 0; c < tempShape[r].length && isValid; c++) {
+          // 计算翻转后占用的格子
+          const newOccupiedCells: GridPosition[] = [];
+          for (let r = 0; r < tempShape.length; r++) {
+            for (let c = 0; c < tempShape[r].length; c++) {
               if (tempShape[r][c]) {
-                const newPos = {
-                  row: piece.position.row + r,
-                  col: piece.position.col + c
-                };
-
-                if (!isValidPosition(newPos) ||
-                    (isReservedPosition(newPos) &&
-                     (newPos.row === state.dateTarget.targetPositions.month.row &&
-                      newPos.col === state.dateTarget.targetPositions.month.col))) {
-                  isValid = false;
-                }
+                newOccupiedCells.push({
+                  row: originalPosition.row + r,
+                  col: originalPosition.col + c
+                });
               }
             }
           }
 
-          if (!isValid) return;
+          // 检查翻转后是否仍在网格内且不冲突
+          let isValid = true;
+          for (const pos of newOccupiedCells) {
+            if (!isValidPosition(pos) ||
+                (isReservedPosition(pos) &&
+                 (pos.row === state.dateTarget.targetPositions.month.row &&
+                  pos.col === state.dateTarget.targetPositions.month.col))) {
+              isValid = false;
+              break;
+            }
+          }
 
-          // 先移除旧位置，再放置新位置
-          get().removePiece(pieceId);
-        }
+          if (!isValid) {
+            get().addNotification('翻转后位置超出边界或与目标格子冲突', 'warning');
+            return;
+          }
 
-        // 更新拼图块翻转状态
-        const updatedPieces = state.availablePieces.map(p =>
-          p.id === pieceId ? { ...p, isFlippedHorizontally: newFlippedState } : p
-        );
+          // 直接更新所有相关状态
+          const updatedPieces = state.availablePieces.map(p =>
+            p.id === pieceId ? { ...p, isFlippedHorizontally: newFlippedState } : p
+          );
 
-        set({ availablePieces: updatedPieces });
+          const newPlacedPieces = new Map(state.placedPieces);
+          const existingPlacedPiece = newPlacedPieces.get(pieceId);
+          if (existingPlacedPiece) {
+            // 确保所有旋转/翻转状态都正确更新
+            newPlacedPieces.set(pieceId, {
+              ...existingPlacedPiece,
+              rotation: piece.rotation,
+              isFlippedHorizontally: newFlippedState,
+              isFlippedVertically: piece.isFlippedVertically,
+              occupiedCells: newOccupiedCells
+            });
+          }
 
-        // 如果之前已放置，重新放置
-        if (piece.isPlaced && piece.position) {
-          get().placePiece(pieceId, piece.position);
+          // 重建网格
+          const newGrid = rebuildGridFromPlacedPieces(newPlacedPieces);
+
+          // 记录移动
+          const move: GameMove = {
+            id: generateMoveId(),
+            timestamp: Date.now(),
+            type: 'rotate', // 使用 'rotate' 类型，因为 GameMove 类型中没有 'flip'
+            pieceId,
+            fromPosition: originalPosition,
+            toPosition: originalPosition
+          };
+
+          set({
+            gridCells: newGrid,
+            availablePieces: updatedPieces,
+            placedPieces: newPlacedPieces,
+            moveHistory: [...state.moveHistory, move]
+          });
+        } else {
+          // 如果拼图块未放置，只更新翻转状态
+          const updatedPieces = state.availablePieces.map(p =>
+            p.id === pieceId ? { ...p, isFlippedHorizontally: newFlippedState } : p
+          );
+
+          set({ availablePieces: updatedPieces });
         }
       },
 
@@ -462,9 +548,12 @@ export const useGameStore = create<GameStore>()(
         if (!piece) return;
 
         const newFlippedState = !piece.isFlippedVertically;
+        const wasPlaced = piece.isPlaced;
+        const placedPiece = state.placedPieces.get(pieceId);
+        const originalPosition = placedPiece?.position;
 
         // 如果拼图块已放置，需要检查翻转后是否仍然合法
-        if (piece.isPlaced && piece.position) {
+        if (wasPlaced && originalPosition && placedPiece) {
           const tempShape = getPieceShapeWithTransform(
             piece.shapeId,
             piece.rotation,
@@ -480,8 +569,8 @@ export const useGameStore = create<GameStore>()(
             for (let c = 0; c < tempShape[r].length && isValid; c++) {
               if (tempShape[r][c]) {
                 const newPos = {
-                  row: piece.position.row + r,
-                  col: piece.position.col + c
+                  row: originalPosition.row + r,
+                  col: originalPosition.col + c
                 };
 
                 if (!isValidPosition(newPos) ||
@@ -494,22 +583,68 @@ export const useGameStore = create<GameStore>()(
             }
           }
 
-          if (!isValid) return;
+          if (!isValid) {
+            get().addNotification('翻转后位置超出边界或与目标格子冲突', 'warning');
+            return;
+          }
 
-          // 先移除旧位置，再放置新位置
-          get().removePiece(pieceId);
-        }
+          // 计算翻转后占用的格子
+          const newOccupiedCells: GridPosition[] = [];
+          for (let r = 0; r < tempShape.length; r++) {
+            for (let c = 0; c < tempShape[r].length; c++) {
+              if (tempShape[r][c]) {
+                newOccupiedCells.push({
+                  row: originalPosition.row + r,
+                  col: originalPosition.col + c
+                });
+              }
+            }
+          }
 
-        // 更新拼图块翻转状态
-        const updatedPieces = state.availablePieces.map(p =>
-          p.id === pieceId ? { ...p, isFlippedVertically: newFlippedState } : p
-        );
+          // 直接更新所有相关状态
+          const updatedPieces = state.availablePieces.map(p =>
+            p.id === pieceId ? { ...p, isFlippedVertically: newFlippedState } : p
+          );
 
-        set({ availablePieces: updatedPieces });
+          const newPlacedPieces = new Map(state.placedPieces);
+          const existingPlacedPiece = newPlacedPieces.get(pieceId);
+          if (existingPlacedPiece) {
+            // 确保所有旋转/翻转状态都正确更新
+            newPlacedPieces.set(pieceId, {
+              ...existingPlacedPiece,
+              rotation: piece.rotation,
+              isFlippedHorizontally: piece.isFlippedHorizontally,
+              isFlippedVertically: newFlippedState,
+              occupiedCells: newOccupiedCells
+            });
+          }
 
-        // 如果之前已放置，重新放置
-        if (piece.isPlaced && piece.position) {
-          get().placePiece(pieceId, piece.position);
+          // 重建网格
+          const newGrid = rebuildGridFromPlacedPieces(newPlacedPieces);
+
+          // 记录移动
+          const move: GameMove = {
+            id: generateMoveId(),
+            timestamp: Date.now(),
+            type: 'rotate', // 使用 'rotate' 类型，因为 GameMove 类型中没有 'flip'
+            pieceId,
+            fromPosition: originalPosition,
+            toPosition: originalPosition
+          };
+
+          set({
+            gridCells: newGrid,
+            availablePieces: updatedPieces,
+            placedPieces: newPlacedPieces,
+            moveHistory: [...state.moveHistory, move]
+          });
+        } else {
+          // 如果拼图块未放置，只更新翻转状态
+          const updatedPieces = state.availablePieces.map(p =>
+            p.id === pieceId ? { ...p, isFlippedVertically: newFlippedState } : p
+          );
+
+          set({ availablePieces: updatedPieces });
         }
       },
 
@@ -861,6 +996,37 @@ export const useGameStore = create<GameStore>()(
         }
 
         return 'invalid';
+      },
+
+      // 通知管理方法
+      addNotification: (message: string, type: 'error' | 'warning' | 'success' | 'info' = 'info') => {
+        const state = get();
+        const newNotification: ToastNotification = {
+          id: `toast_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          message,
+          type,
+          timestamp: Date.now()
+        };
+
+        // 限制最多3个通知，移除最早的
+        const updatedNotifications = [newNotification, ...state.notifications].slice(0, 3);
+
+        set({ notifications: updatedNotifications });
+
+        // 3.5秒后自动移除
+        setTimeout(() => {
+          get().removeNotification(newNotification.id);
+        }, 3500);
+      },
+
+      removeNotification: (id: string) => {
+        const state = get();
+        const updatedNotifications = state.notifications.filter(n => n.id !== id);
+        set({ notifications: updatedNotifications });
+      },
+
+      clearNotifications: () => {
+        set({ notifications: [] });
       }
     })),
     {
